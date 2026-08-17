@@ -1,0 +1,41 @@
+{
+  "name": "ai-coding-buddy",
+  "displayName": "AI Coding Buddy",
+  "description": "A struggle-aware coding tutor that gives hints before answers.",
+  "version": "0.0.1",
+  "publisher": "sabre-drago007",
+  "license": "MIT",
+  "engines": { "vscode": "^1.96.0" },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:codingBuddy.hint",
+    "onCommand:codingBuddy.setStruggleLevel",
+    "onCommand:codingBuddy.reset"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "codingBuddy.hint", "title": "Coding Buddy: Give Me a Hint" },
+      { "command": "codingBuddy.setStruggleLevel", "title": "Coding Buddy: Set Struggle Level" },
+      { "command": "codingBuddy.reset", "title": "Coding Buddy: Reset Struggle Detection" }
+    ],
+    "configuration": {
+      "title": "AI Coding Buddy",
+      "properties": {
+        "codingBuddy.enabled": { "type": "boolean", "default": true, "description": "Enable struggle detection." },
+        "codingBuddy.idleSeconds": { "type": "number", "default": 45, "minimum": 5, "description": "Idle time that contributes to struggle detection." }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.7.0"
+  }
+}
