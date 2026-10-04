@@ -1,41 +1,90 @@
 {
-  "name": "ai-coding-buddy",
-  "displayName": "AI Coding Buddy",
-  "description": "A struggle-aware coding tutor that gives hints before answers.",
-  "version": "0.0.1",
-  "publisher": "sabre-drago007",
-  "license": "MIT",
-  "engines": { "vscode": "^1.96.0" },
-  "categories": ["Other"],
-  "activationEvents": [
-    "onStartupFinished",
-    "onCommand:codingBuddy.hint",
-    "onCommand:codingBuddy.setStruggleLevel",
-    "onCommand:codingBuddy.reset"
-  ],
-  "main": "./out/extension.js",
-  "contributes": {
-    "commands": [
-      { "command": "codingBuddy.hint", "title": "Coding Buddy: Give Me a Hint" },
-      { "command": "codingBuddy.setStruggleLevel", "title": "Coding Buddy: Set Struggle Level" },
-      { "command": "codingBuddy.reset", "title": "Coding Buddy: Reset Struggle Detection" }
+    "name": "ai-coding-buddy",
+    "displayName": "AI Coding Buddy",
+    "description": "A struggle-aware AI coding tutor for VS Code.",
+    "version": "0.0.1",
+    "publisher": "ai-coding-buddy",
+    "engines": {
+        "vscode": "^1.90.0"
+    },
+    "categories": [
+        "Education",
+        "Machine Learning"
     ],
-    "configuration": {
-      "title": "AI Coding Buddy",
-      "properties": {
-        "codingBuddy.enabled": { "type": "boolean", "default": true, "description": "Enable struggle detection." },
-        "codingBuddy.idleSeconds": { "type": "number", "default": 45, "minimum": 5, "description": "Idle time that contributes to struggle detection." }
-      }
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "./out/extension.js",
+
+    "contributes": {
+
+        "commands": [
+            {
+                "command": "codingBuddy.getHint",
+                "title": "AI Coding Buddy: Get Hint"
+            },
+            {
+                "command": "codingBuddy.getLevel",
+                "title": "AI Coding Buddy: Get Struggle Level"
+            },
+            {
+                "command": "codingBuddy.runPython",
+                "title": "AI Coding Buddy: Run Python File"
+            },
+            {
+                "command": "codingBuddy.setLevel",
+                "title": "AI Coding Buddy: Set Manual Level"
+            },
+            {
+                "command": "codingBuddy.enableAutomatic",
+                "title": "AI Coding Buddy: Return to Automatic Detection"
+            },
+            {
+                "command": "codingBuddy.reset",
+                "title": "AI Coding Buddy: Reset"
+            }
+        ],
+
+        "configuration": {
+            "title": "AI Coding Buddy",
+            "properties": {
+
+                "codingBuddy.level1TimeLimit": {
+                    "type": "number",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "description": "Time in seconds to remain at Level 1 before automatic escalation to Level 2 when the Random Forest continues to detect higher struggle."
+                },
+
+                "codingBuddy.level2TimeLimit": {
+                    "type": "number",
+                    "default": 30,
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "description": "Time in seconds to remain at Level 2 before automatic escalation to Level 3 when the Random Forest continues to detect higher struggle."
+                },
+
+                "codingBuddy.level3TimeLimit": {
+                    "type": "number",
+                    "default": 60,
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "description": "Time in seconds used while the student remains at Level 3 before the system re-evaluates the assistance level."
+                }
+
+            }
+        }
+    },
+
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "@types/vscode": "^1.90.0",
+        "typescript": "^5.0.0"
     }
-  },
-  "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/vscode": "^1.96.0",
-    "typescript": "^5.7.0"
-  }
 }
