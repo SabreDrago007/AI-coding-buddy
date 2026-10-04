@@ -40,8 +40,10 @@ const child_process_1 = require("child_process");
 const path = __importStar(require("path"));
 const struggleDetector_1 = require("./struggleDetector");
 const hintEngine_1 = require("./hintEngine");
+const sessionRecorder_1 = require("./sessionRecorder");
 let detector;
 let hintEngine;
+let sessionRecorder;
 let statusBar;
 let currentLevel = 1;
 let manualOverride = false;
@@ -54,6 +56,7 @@ function activate(context) {
     console.log("AI Coding Buddy is now active.");
     detector = new struggleDetector_1.StruggleDetector();
     hintEngine = new hintEngine_1.HintEngine();
+    sessionRecorder = new sessionRecorder_1.SessionRecorder(context.globalStorageUri.fsPath);
     // STATUS BAR
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBar.command = "codingBuddy.openControlPanel";
@@ -108,6 +111,7 @@ function activate(context) {
         const levelAtRequest = getEffectiveLevel();
         const codeAtRequest = editor.document.getText();
         const languageAtRequest = editor.document.languageId;
+        sessionRecorder.recordHint(levelAtRequest);
         isGeneratingHint = true;
         updateStatusBar();
         try {
@@ -189,6 +193,44 @@ function activate(context) {
         vscode.window.showInformationMessage("AI Coding Buddy is now using automatic detection.");
     });
     context.subscriptions.push(automaticCommand);
+    // PRIVACY-PRESERVING LEARNING SESSION
+    const startSessionCommand = vscode.commands.registerCommand("codingBuddy.startLearningSession", async () => {
+        if (sessionRecorder.isActive) {
+            vscode.window.showInformationMessage("A learning session is already active. Finish it before starting another.");
+            return;
+        }
+        const choice = await vscode.window.showWarningMessage("Start a learning session? AI Coding Buddy will keep behavior counts and your feedback locally. It will not save source code or upload data. An unfinished session is discarded when VS Code closes.", { modal: true }, "Start Session");
+        if (choice !== "Start Session") {
+            return;
+        }
+        detector.reset();
+        sessionRecorder.start(getEffectiveLevel());
+        vscode.window.showInformationMessage("Learning session started. Use ‘AI Coding Buddy: Finish Learning Session’ when you are done.");
+    });
+    context.subscriptions.push(startSessionCommand);
+    const finishSessionCommand = vscode.commands.registerCommand("codingBuddy.finishLearningSession", async () => {
+        if (!sessionRecorder.isActive) {
+            vscode.window.showInformationMessage("There is no active learning session.");
+            return;
+        }
+        const outcome = await vscode.window.showQuickPick([
+            { label: "Solved", description: "I reached a working solution", solved: true },
+            { label: "Still working", description: "I have not solved it yet", solved: false }
+        ], { placeHolder: "How did the session go?" });
+        if (!outcome) {
+            return;
+        }
+        try {
+            await sessionRecorder.finish(outcome.solved, detector.getFeatures());
+            vscode.window.showInformationMessage("Learning session saved locally. No source code was recorded.");
+            detector.reset();
+        }
+        catch (error) {
+            console.error("Could not save learning session:", error);
+            vscode.window.showErrorMessage("AI Coding Buddy could not save the learning session.");
+        }
+    });
+    context.subscriptions.push(finishSessionCommand);
     // RUN PYTHON
     const runPythonCommand = vscode.commands.registerCommand("codingBuddy.runPython", async () => {
         const editor = vscode.window.activeTextEditor;
@@ -201,6 +243,7 @@ function activate(context) {
             return;
         }
         const filePath = editor.document.fileName;
+        sessionRecorder.recordAttempt();
         vscode.window.showInformationMessage("AI Coding Buddy: Running Python file...");
         const python = (0, child_process_1.spawn)("py", [filePath], {
             cwd: path.dirname(filePath)
@@ -297,6 +340,7 @@ function openControlPanel() {
 function setManualLevel(level) {
     manualOverride = true;
     manualLevel = level;
+    sessionRecorder.recordManualLevel(level);
     currentLevel = level;
     levelStartedAt = Date.now();
     updateStatusBar();

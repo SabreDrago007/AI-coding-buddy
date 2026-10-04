@@ -4,9 +4,11 @@ import * as path from "path";
 
 import { StruggleDetector } from "./struggleDetector";
 import { HintEngine } from "./hintEngine";
+import { SessionRecorder } from "./sessionRecorder";
 
 let detector: StruggleDetector;
 let hintEngine: HintEngine;
+let sessionRecorder: SessionRecorder;
 let statusBar: vscode.StatusBarItem;
 
 let currentLevel = 1;
@@ -23,6 +25,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     detector = new StruggleDetector();
     hintEngine = new HintEngine();
+    sessionRecorder = new SessionRecorder(context.globalStorageUri.fsPath);
 
     // STATUS BAR
     statusBar = vscode.window.createStatusBarItem(
@@ -112,6 +115,7 @@ export function activate(context: vscode.ExtensionContext) {
             const levelAtRequest = getEffectiveLevel();
             const codeAtRequest = editor.document.getText();
             const languageAtRequest = editor.document.languageId;
+            sessionRecorder.recordHint(levelAtRequest);
 
             isGeneratingHint = true;
             updateStatusBar();
@@ -251,6 +255,72 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(automaticCommand);
 
+    // PRIVACY-PRESERVING LEARNING SESSION
+    const startSessionCommand = vscode.commands.registerCommand(
+        "codingBuddy.startLearningSession",
+        async () => {
+            if (sessionRecorder.isActive) {
+                vscode.window.showInformationMessage(
+                    "A learning session is already active. Finish it before starting another."
+                );
+                return;
+            }
+
+            const choice = await vscode.window.showWarningMessage(
+                "Start a learning session? AI Coding Buddy will keep behavior counts and your feedback locally. It will not save source code or upload data. An unfinished session is discarded when VS Code closes.",
+                { modal: true },
+                "Start Session"
+            );
+            if (choice !== "Start Session") {
+                return;
+            }
+
+            detector.reset();
+            sessionRecorder.start(getEffectiveLevel());
+            vscode.window.showInformationMessage(
+                "Learning session started. Use ‘AI Coding Buddy: Finish Learning Session’ when you are done."
+            );
+        }
+    );
+    context.subscriptions.push(startSessionCommand);
+
+    const finishSessionCommand = vscode.commands.registerCommand(
+        "codingBuddy.finishLearningSession",
+        async () => {
+            if (!sessionRecorder.isActive) {
+                vscode.window.showInformationMessage(
+                    "There is no active learning session."
+                );
+                return;
+            }
+
+            const outcome = await vscode.window.showQuickPick(
+                [
+                    { label: "Solved", description: "I reached a working solution", solved: true },
+                    { label: "Still working", description: "I have not solved it yet", solved: false }
+                ],
+                { placeHolder: "How did the session go?" }
+            );
+            if (!outcome) {
+                return;
+            }
+
+            try {
+                await sessionRecorder.finish(outcome.solved, detector.getFeatures());
+                vscode.window.showInformationMessage(
+                    "Learning session saved locally. No source code was recorded."
+                );
+                detector.reset();
+            } catch (error) {
+                console.error("Could not save learning session:", error);
+                vscode.window.showErrorMessage(
+                    "AI Coding Buddy could not save the learning session."
+                );
+            }
+        }
+    );
+    context.subscriptions.push(finishSessionCommand);
+
     // RUN PYTHON
     const runPythonCommand = vscode.commands.registerCommand(
         "codingBuddy.runPython",
@@ -272,6 +342,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             const filePath = editor.document.fileName;
+            sessionRecorder.recordAttempt();
 
             vscode.window.showInformationMessage(
                 "AI Coding Buddy: Running Python file..."
@@ -432,6 +503,7 @@ function openControlPanel(): void {
 function setManualLevel(level: number): void {
     manualOverride = true;
     manualLevel = level;
+    sessionRecorder.recordManualLevel(level);
     currentLevel = level;
     levelStartedAt = Date.now();
 

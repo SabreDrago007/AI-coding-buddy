@@ -42,6 +42,14 @@
             {
                 "command": "codingBuddy.reset",
                 "title": "AI Coding Buddy: Reset"
+            },
+            {
+                "command": "codingBuddy.startLearningSession",
+                "title": "AI Coding Buddy: Start Learning Session"
+            },
+            {
+                "command": "codingBuddy.finishLearningSession",
+                "title": "AI Coding Buddy: Finish Learning Session"
             }
         ],
 
