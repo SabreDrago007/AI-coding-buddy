@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { randomBytes } from "crypto";
 import { StruggleDetector } from "./struggleDetector";
 import { HintEngine } from "./hintEngine";
 import { SessionRecorder } from "./sessionRecorder";
@@ -10,6 +11,7 @@ let sessionRecorder: SessionRecorder;
 let languageRunner: LanguageRunner;
 let statusBar: vscode.StatusBarItem;
 let runOutput: vscode.OutputChannel;
+let controlPanel: vscode.WebviewPanel | undefined;
 let selectedLanguage = "auto";
 
 let currentLevel = 1;
@@ -20,6 +22,8 @@ let automaticTimer: NodeJS.Timeout;
 
 // Prevent automatic level changes while generating a hint.
 let isGeneratingHint = false;
+let isStartingLearningSession = false;
+let isRunningFile = false;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log("AI Coding Buddy is now active.");
@@ -121,10 +125,29 @@ export function activate(context: vscode.ExtensionContext) {
             // Capture the level and code when the user clicks.
             // These values will not change during generation.
             const levelAtRequest = getEffectiveLevel();
-            const codeAtRequest = editor.document.getText();
+            const codeAtRequest = editor.selection.isEmpty
+                ? editor.document.getText()
+                : editor.document.getText(editor.selection);
             const languageAtRequest = selectedLanguage === "auto"
                 ? editor.document.languageId
                 : selectedLanguage;
+            let endpoint: URL;
+            try {
+                endpoint = hintEngine.getConfiguredEndpoint();
+            } catch (error) {
+                vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+                return;
+            }
+            if (!hintEngine.isLocalEndpoint(endpoint)) {
+                const approval = await vscode.window.showWarningMessage(
+                    `This hint will send ${codeAtRequest.length} characters of source text to ${endpoint.host} over HTTPS. Continue?`,
+                    { modal: true },
+                    "Send Source and Continue"
+                );
+                if (approval !== "Send Source and Continue") {
+                    return;
+                }
+            }
             sessionRecorder.recordHint(levelAtRequest);
 
             isGeneratingHint = true;
@@ -143,7 +166,8 @@ export function activate(context: vscode.ExtensionContext) {
                         return await hintEngine.generateHint(
                             levelAtRequest,
                             codeAtRequest,
-                            languageAtRequest
+                            languageAtRequest,
+                            endpoint
                         );
                     }
                 );
@@ -152,7 +176,7 @@ export function activate(context: vscode.ExtensionContext) {
                     "codingBuddyHint",
                     `AI Coding Buddy - Level ${levelAtRequest}`,
                     vscode.ViewColumn.Beside,
-                    {}
+                    { enableScripts: false, localResourceRoots: [] }
                 );
 
                 panel.webview.html = createHintHTML(
@@ -269,7 +293,7 @@ export function activate(context: vscode.ExtensionContext) {
     const startSessionCommand = vscode.commands.registerCommand(
         "codingBuddy.startLearningSession",
         async () => {
-            if (sessionRecorder.isActive) {
+            if (sessionRecorder.isActive || isStartingLearningSession) {
                 vscode.window.showInformationMessage(
                     "A learning session is already active. Finish it before starting another."
                 );
@@ -284,13 +308,24 @@ export function activate(context: vscode.ExtensionContext) {
             if (choice !== "Start Session") {
                 return;
             }
+            if (sessionRecorder.isActive || isStartingLearningSession) {
+                return;
+            }
 
-            const predictedLevel = await detector.predictLevel();
-            detector.reset();
-            sessionRecorder.start(predictedLevel);
-            vscode.window.showInformationMessage(
-                "Learning session started. Use ‘AI Coding Buddy: Finish Learning Session’ when you are done."
-            );
+            isStartingLearningSession = true;
+            try {
+                const predictedLevel = await detector.predictLevel();
+                detector.reset();
+                sessionRecorder.start(predictedLevel);
+                vscode.window.showInformationMessage(
+                    "Learning session started. Use ‘AI Coding Buddy: Finish Learning Session’ when you are done."
+                );
+            } catch (error) {
+                console.error("Could not start learning session:", error);
+                vscode.window.showErrorMessage("AI Coding Buddy could not start the learning session.");
+            } finally {
+                isStartingLearningSession = false;
+            }
         }
     );
     context.subscriptions.push(startSessionCommand);
@@ -438,19 +473,36 @@ export function activate(context: vscode.ExtensionContext) {
 
 // CONTROL PANEL
 function openControlPanel(context: vscode.ExtensionContext): void {
+    if (controlPanel) {
+        controlPanel.reveal(vscode.ViewColumn.Beside);
+        updateControlPanelState();
+        return;
+    }
+    const nonce = randomBytes(16).toString("base64");
     const panel = vscode.window.createWebviewPanel(
         "codingBuddyControlPanel",
         "AI Coding Buddy",
         vscode.ViewColumn.Beside,
-        { enableScripts: true }
+        { enableScripts: true, localResourceRoots: [] }
     );
+    controlPanel = panel;
+    panel.onDidDispose(() => {
+        if (controlPanel === panel) {
+            controlPanel = undefined;
+        }
+    });
 
-    panel.webview.html = createControlPanelHTML();
+    panel.webview.html = createControlPanelHTML(nonce);
 
     panel.webview.onDidReceiveMessage(async (message) => {
+        if (!message || typeof message !== "object") {
+            return;
+        }
         switch (message.command) {
             case "setLevel":
-                setManualLevel(message.level);
+                if ([1, 2, 3].includes(message.level)) {
+                    setManualLevel(message.level);
+                }
                 break;
 
             case "automatic":
@@ -458,9 +510,10 @@ function openControlPanel(context: vscode.ExtensionContext): void {
                 break;
 
             case "selectLanguage":
-                if (["auto", "python", "java", "c", "cpp"].includes(message.language)) {
+                if (typeof message.language === "string" && ["auto", "python", "java", "c", "cpp"].includes(message.language)) {
                     selectedLanguage = message.language;
                     await context.globalState.update("selectedLanguage", selectedLanguage);
+                    updateStatusBar();
                 }
                 break;
 
@@ -483,12 +536,15 @@ function openControlPanel(context: vscode.ExtensionContext): void {
                 break;
         }
 
-        panel.webview.html = createControlPanelHTML();
+        updateControlPanelState();
     });
 }
 
 // MANUAL LEVEL
 function setManualLevel(level: number): void {
+    if (![1, 2, 3].includes(level)) {
+        return;
+    }
     manualOverride = true;
     manualLevel = level;
     sessionRecorder.recordManualLevel(level);
@@ -503,6 +559,10 @@ function setManualLevel(level: number): void {
 }
 
 async function runActiveFile(context: vscode.ExtensionContext): Promise<void> {
+    if (isRunningFile) {
+        vscode.window.showInformationMessage("AI Coding Buddy is already running a file.");
+        return;
+    }
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         vscode.window.showWarningMessage("Open a source file before running it.");
@@ -519,11 +579,27 @@ async function runActiveFile(context: vscode.ExtensionContext): Promise<void> {
         return;
     }
 
+    if (!vscode.workspace.isTrusted) {
+        const approval = await vscode.window.showWarningMessage(
+            "This workspace is in Restricted Mode. Running this file executes its code with your account's permissions. Continue only if you trust the file.",
+            { modal: true },
+            "Run Anyway"
+        );
+        if (approval !== "Run Anyway") {
+            return;
+        }
+    }
+
     if (editor.document.isDirty && !(await editor.document.save())) {
         vscode.window.showWarningMessage("Save the file before running it.");
         return;
     }
 
+    if (isRunningFile) {
+        return;
+    }
+
+    isRunningFile = true;
     sessionRecorder.recordAttempt();
     runOutput.clear();
     runOutput.appendLine(`Running ${editor.document.fileName} as ${language}…`);
@@ -557,6 +633,8 @@ async function runActiveFile(context: vscode.ExtensionContext): Promise<void> {
         runOutput.appendLine(detail);
         detector.recordFailedRun();
         vscode.window.showErrorMessage(`AI Coding Buddy could not run this file: ${detail}`);
+    } finally {
+        isRunningFile = false;
     }
 }
 
@@ -643,10 +721,30 @@ function updateStatusBar(): void {
 
     statusBar.tooltip =
         "Open AI Coding Buddy Control Panel";
+    statusBar.accessibilityInformation = {
+        label: `AI Coding Buddy, assistance level ${level}, ${mode} mode. Open control panel.`
+    };
+    updateControlPanelState();
+}
+
+function updateControlPanelState(): void {
+    if (!controlPanel) {
+        return;
+    }
+    void controlPanel.webview.postMessage({
+        type: "state",
+        level: getEffectiveLevel(),
+        mode: manualOverride ? "Manual" : "Automatic",
+        manualOverride,
+        selectedLanguage,
+        level1Time: getLevelTimeLimit(1),
+        level2Time: getLevelTimeLimit(2),
+        level3Time: getLevelTimeLimit(3)
+    });
 }
 
 // CONTROL PANEL HTML
-function createControlPanelHTML(): string {
+function createControlPanelHTML(nonce: string): string {
     const level = getEffectiveLevel();
     const mode = manualOverride ? "Manual" : "Automatic";
 
@@ -669,167 +767,197 @@ function createControlPanelHTML(): string {
 <html>
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    padding: 25px;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 20px clamp(14px, 4vw, 32px) 32px;
     color: var(--vscode-foreground);
     background: var(--vscode-editor-background);
+    line-height: 1.5;
 }
 h1 {
-    font-size: 26px;
-    margin-bottom: 5px;
+    font-size: 24px;
+    margin: 0 0 4px;
 }
 .subtitle {
-    opacity: 0.7;
-    margin-bottom: 25px;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 20px;
 }
 .card {
     padding: 18px;
-    margin-bottom: 18px;
-    border-radius: 10px;
+    margin-bottom: 14px;
+    border-radius: 12px;
     background: var(--vscode-textBlockQuote-background);
     border: 1px solid var(--vscode-panel-border);
 }
+.card-title { font-size: 14px; font-weight: 650; }
 .level {
-    font-size: 32px;
-    font-weight: bold;
-    margin-top: 8px;
+    display: inline-flex;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 24px;
+    font-weight: 700;
+    margin-top: 10px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
 }
 .mode {
     font-size: 16px;
-    margin-top: 5px;
+    margin-top: 8px;
+    color: var(--vscode-descriptionForeground);
 }
 .buttons {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
     margin-top: 15px;
 }
 button {
     border: none;
-    border-radius: 6px;
-    padding: 10px 15px;
+    border-radius: 7px;
+    padding: 10px 12px;
     cursor: pointer;
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
+    font: inherit;
+    transition: background-color 120ms ease, transform 120ms ease, outline-color 120ms ease;
 }
-button:hover {
+button:hover:not(:disabled) {
     background: var(--vscode-button-hoverBackground);
+    transform: translateY(-1px);
 }
-.active {
+button:active:not(:disabled) { transform: translateY(0); }
+button:focus-visible, select:focus-visible {
     outline: 2px solid var(--vscode-focusBorder);
+    outline-offset: 2px;
+}
+.active, button[aria-pressed="true"] {
+    box-shadow: inset 0 0 0 2px var(--vscode-focusBorder);
 }
 .time-row {
     display: flex;
     justify-content: space-between;
-    padding: 8px 0;
+    gap: 14px;
+    padding: 9px 0;
     border-bottom: 1px solid var(--vscode-panel-border);
 }
 .time-row:last-child {
     border-bottom: none;
 }
+.time-value { font-variant-numeric: tabular-nums; color: var(--vscode-descriptionForeground); }
 .hint-button {
     width: 100%;
     margin-top: 10px;
-    font-size: 16px;
+    min-height: 42px;
+    font-weight: 600;
 }
 select {
     margin-top: 8px;
-    padding: 8px;
-    min-width: 180px;
+    padding: 9px 32px 9px 10px;
+    width: 100%;
+    max-width: 340px;
     background: var(--vscode-dropdown-background);
     color: var(--vscode-dropdown-foreground);
     border: 1px solid var(--vscode-dropdown-border);
+    border-radius: 6px;
+    font: inherit;
+}
+.helper { color: var(--vscode-descriptionForeground); font-size: 12px; margin: 7px 0 0; }
+.time-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; }
+.time-tile { padding: 10px; border-radius: 8px; background: var(--vscode-editor-background); }
+.time-tile strong { display:block; font-size: 18px; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+    button { transition: none; }
 }
 </style>
 </head>
 <body>
 <h1>🤖 AI Coding Buddy</h1>
-<div class="subtitle">Your adaptive programming tutor</div>
+<div class="subtitle">Adaptive help, at your pace.</div>
 
 <div class="card">
-    <strong>Programming Language</strong>
-    <div><select aria-label="Programming language" onchange="selectLanguage(this.value)">
+    <div class="card-title">Programming language</div>
+    <div><select id="languageSelect" aria-label="Programming language">
         ${languageOptions.map(([value, label]) => `<option value="${value}" ${selectedLanguage === value ? "selected" : ""}>${label}</option>`).join("")}
     </select></div>
-    <p style="opacity:0.7;">Selected: ${languageLabel}. Auto-detect uses the active file's language.</p>
-    <button class="hint-button" onclick="runFile()">▶ Run Current File</button>
+    <p class="helper" id="languageSummary">${languageLabel} uses the active editor language when set to Auto-detect.</p>
+    <button class="hint-button" id="runButton">▶ &nbsp;Run Current File</button>
 </div>
 
 <div class="card">
-    <div>Current Assistance Level</div>
-    <div class="level">Level ${level}</div>
-    <div class="mode">Mode: <strong>${mode}</strong></div>
+    <div class="card-title">Current assistance</div>
+    <div class="level" id="currentLevel">Level ${level}</div>
+    <div class="mode">Mode: <strong id="currentMode">${mode}</strong></div>
 </div>
 
 <div class="card">
-    <strong>Assistance Level</strong>
+    <div class="card-title">Choose your help level</div>
     <div class="buttons">
         <button
-            class="${level === 1 && manualOverride ? "active" : ""}"
-            onclick="setLevel(1)">
+            data-level="1" aria-pressed="${level === 1 && manualOverride}"
+            >
             Level 1<br><small>Let me think</small>
         </button>
 
         <button
-            class="${level === 2 && manualOverride ? "active" : ""}"
-            onclick="setLevel(2)">
+            data-level="2" aria-pressed="${level === 2 && manualOverride}"
+            >
             Level 2<br><small>Stronger hint</small>
         </button>
 
         <button
-            class="${level === 3 && manualOverride ? "active" : ""}"
-            onclick="setLevel(3)">
+            data-level="3" aria-pressed="${level === 3 && manualOverride}"
+            >
             Level 3<br><small>Direct help</small>
         </button>
     </div>
 
     <button
-        class="${!manualOverride ? "active" : ""}"
-        style="margin-top:15px;"
-        onclick="automatic()">
+        id="automaticButton" aria-pressed="${!manualOverride}"
+        style="margin-top:12px;width:100%;"
+        >
         🔄 Return to Automatic Detection
     </button>
 </div>
 
 <div class="card">
-    <strong>Configured Time Limits</strong>
-
-    <div class="time-row">
-        <span>Level 1</span>
-        <span>${level1Time} seconds</span>
+    <div class="card-title">Automatic help timing</div>
+    <div class="time-grid">
+        <div class="time-tile">Level 1<strong><span id="level1Time">${level1Time}</span>s</strong></div>
+        <div class="time-tile">Level 2<strong><span id="level2Time">${level2Time}</span>s</strong></div>
+        <div class="time-tile">Level 3<strong><span id="level3Time">${level3Time}</span>s</strong></div>
     </div>
-
-    <div class="time-row">
-        <span>Level 2</span>
-        <span>${level2Time} seconds</span>
-    </div>
-
-    <div class="time-row">
-        <span>Level 3</span>
-        <span>${level3Time} seconds</span>
-    </div>
-
-    <p style="opacity:0.7;">
-        Change these values in VS Code Settings → AI Coding Buddy.
-    </p>
+    <p class="helper">Adjust these limits in VS Code Settings → AI Coding Buddy.</p>
 </div>
 
 <div class="card">
-    <strong>Actions</strong>
+    <div class="card-title">Quick actions</div>
 
-    <button class="hint-button" onclick="getHint()">
+    <button class="hint-button" id="getHintButton">
         💡 Get Hint
     </button>
 
-    <button class="hint-button" onclick="resetBuddy()">
+    <button class="hint-button" id="resetButton">
         🔄 Reset AI Coding Buddy
     </button>
 </div>
 
-<script>
+<script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
+
+document.querySelectorAll("[data-level]").forEach((button) => {
+    button.addEventListener("click", () => setLevel(Number(button.dataset.level)));
+});
+document.getElementById("languageSelect").addEventListener("change", (event) => {
+    selectLanguage(event.target.value);
+});
+document.getElementById("runButton").addEventListener("click", runFile);
+document.getElementById("automaticButton").addEventListener("click", automatic);
+document.getElementById("getHintButton").addEventListener("click", getHint);
+document.getElementById("resetButton").addEventListener("click", resetBuddy);
 
 function setLevel(level) {
     vscode.postMessage({
@@ -863,6 +991,25 @@ function getHint() {
         command: "getHint"
     });
 }
+
+window.addEventListener("message", (event) => {
+    const state = event.data;
+    if (!state || state.type !== "state") return;
+    document.getElementById("currentLevel").textContent = "Level " + state.level;
+    document.getElementById("currentMode").textContent = state.mode;
+    document.querySelectorAll("[data-level]").forEach((button) => {
+        const active = state.manualOverride && Number(button.dataset.level) === state.level;
+        button.setAttribute("aria-pressed", String(active));
+    });
+    document.getElementById("automaticButton").setAttribute("aria-pressed", String(!state.manualOverride));
+    document.getElementById("level1Time").textContent = state.level1Time;
+    document.getElementById("level2Time").textContent = state.level2Time;
+    document.getElementById("level3Time").textContent = state.level3Time;
+    const languageSelect = document.getElementById("languageSelect");
+    if (document.activeElement !== languageSelect) languageSelect.value = state.selectedLanguage;
+    const option = languageSelect.options[languageSelect.selectedIndex];
+    document.getElementById("languageSummary").textContent = option.text + " uses the active editor language when set to Auto-detect.";
+});
 </script>
 </body>
 </html>
@@ -881,6 +1028,7 @@ function createHintHTML(level: number, hint: string): string {
 <!DOCTYPE html>
 <html>
 <head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
 <style>
 body {
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;

@@ -144,6 +144,9 @@ class LanguageRunner {
                 finish({ success: !timedOut && code === 0, output: output.trim() });
             });
             child.stdin.on("error", () => undefined);
+            // This runner is intentionally non-interactive; close stdin so programs
+            // waiting for input fail clearly instead of hanging until the timeout.
+            child.stdin.end();
         });
     }
 }

@@ -2,7 +2,7 @@
     "name": "ai-coding-buddy",
     "displayName": "AI Coding Buddy",
     "description": "A struggle-aware AI coding tutor for VS Code.",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "publisher": "ai-coding-buddy",
     "repository": {
         "type": "git",
@@ -18,6 +18,12 @@
     "extensionKind": [
         "workspace"
     ],
+    "capabilities": {
+        "untrustedWorkspaces": {
+            "supported": true,
+            "description": "Hint generation and struggle estimates are available in Restricted Mode. Running the active source file always requires confirmation in an untrusted workspace."
+        }
+    },
     "categories": [
         "Education",
         "Machine Learning"
@@ -106,36 +112,43 @@
                 "codingBuddy.pythonPath": {
                     "type": "string",
                     "default": "",
+                    "scope": "machine",
                     "description": "Python executable path. Leave empty to detect py, python, or python3 automatically."
                 },
                 "codingBuddy.javaCompilerPath": {
                     "type": "string",
                     "default": "javac",
+                    "scope": "machine",
                     "description": "Java compiler executable used by Run Current File."
                 },
                 "codingBuddy.javaRuntimePath": {
                     "type": "string",
                     "default": "java",
+                    "scope": "machine",
                     "description": "Java runtime executable used after compilation."
                 },
                 "codingBuddy.cCompilerPath": {
                     "type": "string",
                     "default": "gcc",
+                    "scope": "machine",
                     "description": "C compiler executable used by Run Current File."
                 },
                 "codingBuddy.cppCompilerPath": {
                     "type": "string",
                     "default": "g++",
+                    "scope": "machine",
                     "description": "C++ compiler executable used by Run Current File."
                 },
                 "codingBuddy.ollamaUrl": {
                     "type": "string",
                     "default": "http://127.0.0.1:11434/api/generate",
+                    "scope": "machine",
                     "description": "Ollama generate API URL used for hints."
                 },
                 "codingBuddy.ollamaModel": {
                     "type": "string",
                     "default": "qwen2.5-coder:7b",
+                    "scope": "machine",
                     "description": "Ollama model name used for hints."
                 },
                 "codingBuddy.hintTimeoutMs": {
