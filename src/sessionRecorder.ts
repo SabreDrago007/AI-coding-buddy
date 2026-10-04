@@ -14,6 +14,7 @@ interface LearningSession {
 export class SessionRecorder {
     private activeSession: LearningSession | undefined;
     private readonly dataPath: string;
+    private finishing = false;
 
     constructor(storagePath: string) {
         this.dataPath = path.join(storagePath, "learning_sessions.csv");
@@ -21,6 +22,10 @@ export class SessionRecorder {
 
     get isActive(): boolean {
         return this.activeSession !== undefined;
+    }
+
+    get dataFilePath(): string {
+        return this.dataPath;
     }
 
     start(predictedLevel: number): void {
@@ -63,11 +68,11 @@ export class SessionRecorder {
 
     async finish(solved: boolean, features: BehaviorFeatures): Promise<void> {
         const session = this.activeSession;
-        if (!session) {
+        if (!session || this.finishing) {
             return;
         }
 
-        this.activeSession = undefined;
+        this.finishing = true;
         const header = [
             "predicted_level", "manual_level", "requested_stronger_hint", "solved",
             "hint_requests", "time_to_fix_seconds", "attempts",
@@ -89,14 +94,26 @@ export class SessionRecorder {
             features.rapid_edits
         ].join(",");
 
-        await fs.mkdir(path.dirname(this.dataPath), { recursive: true });
-        const needsHeader = await fs.access(this.dataPath).then(
-            () => false,
-            () => true
-        );
-        if (needsHeader) {
-            await fs.writeFile(this.dataPath, `${header.join(",")}\n`, "utf8");
+        try {
+            await fs.mkdir(path.dirname(this.dataPath), { recursive: true });
+            const file = await fs.open(this.dataPath, "a+");
+            try {
+                const stats = await file.stat();
+                if (stats.size === 0) {
+                    await file.write(`${header.join(",")}\n`, undefined, "utf8");
+                }
+                await file.write(`${row}\n`, undefined, "utf8");
+            } finally {
+                await file.close();
+            }
+            this.activeSession = undefined;
+        } finally {
+            this.finishing = false;
         }
-        await fs.appendFile(this.dataPath, `${row}\n`, "utf8");
+    }
+
+    async clear(): Promise<void> {
+        this.activeSession = undefined;
+        await fs.rm(this.dataPath, { force: true });
     }
 }

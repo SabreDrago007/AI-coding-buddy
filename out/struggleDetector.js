@@ -37,108 +37,159 @@ exports.StruggleDetector = void 0;
 const vscode = __importStar(require("vscode"));
 const child_process_1 = require("child_process");
 const path = __importStar(require("path"));
+const FEATURE_WINDOW_MS = 5 * 60 * 1000;
 class StruggleDetector {
-    features = {
-        idle_seconds: 0,
-        errors: 0,
-        failed_runs: 0,
-        deletions: 0,
-        rapid_edits: 0
-    };
     lastEditTime = Date.now();
-    idleTimer;
-    knownErrors = new Set();
-    constructor() {
-        this.idleTimer = setInterval(() => {
-            this.features.idle_seconds =
-                Math.floor((Date.now() - this.lastEditTime) / 1000);
-        }, 1000);
-    }
+    errorEvents = new Map();
+    failedRunEvents = [];
+    deletionEvents = [];
+    rapidEditEvents = [];
+    mlUnavailable = false;
+    predictionInFlight;
+    constructor() { }
     recordEdit(deletedCharacters = 0) {
         const now = Date.now();
         const timeSinceLastEdit = now - this.lastEditTime;
         this.lastEditTime = now;
-        this.features.idle_seconds = 0;
         if (deletedCharacters > 0) {
-            this.features.deletions +=
-                deletedCharacters;
+            // The training feature represents deletion operations, not characters.
+            this.deletionEvents.push(now);
         }
         if (timeSinceLastEdit < 1000) {
-            this.features.rapid_edits++;
+            this.rapidEditEvents.push(now);
         }
     }
     recordError(errorKey) {
+        const now = Date.now();
         if (errorKey) {
-            if (this.knownErrors.has(errorKey)) {
+            const lastSeen = this.errorEvents.get(errorKey);
+            if (lastSeen !== undefined && now - lastSeen < FEATURE_WINDOW_MS) {
                 return;
             }
-            this.knownErrors.add(errorKey);
+            this.errorEvents.set(errorKey, now);
         }
-        this.features.errors++;
-        console.log(`AI Coding Buddy: New error detected. Total errors: ${this.features.errors}`);
+        else {
+            this.errorEvents.set(`unkeyed-${now}-${Math.random()}`, now);
+        }
     }
     recordFailedRun() {
-        this.features.failed_runs++;
-        console.log(`AI Coding Buddy: Failed run detected. Total failed runs: ${this.features.failed_runs}`);
+        this.failedRunEvents.push(Date.now());
     }
     getFeatures() {
+        const now = Date.now();
+        const cutoff = now - FEATURE_WINDOW_MS;
+        this.pruneEvents(cutoff);
         return {
-            ...this.features
+            idle_seconds: Math.min(120, Math.floor((now - this.lastEditTime) / 1000)),
+            errors: Math.min(this.errorEvents.size, 10),
+            failed_runs: Math.min(this.failedRunEvents.length, 8),
+            deletions: Math.min(this.deletionEvents.length, 20),
+            rapid_edits: Math.min(this.rapidEditEvents.length, 15)
         };
     }
     async predictLevel() {
-        return new Promise((resolve) => {
-            const extension = vscode.extensions.all.find(ext => ext.packageJSON.name ===
-                "ai-coding-buddy");
-            if (!extension) {
-                console.error("AI Coding Buddy extension not found.");
-                resolve(1);
-                return;
+        if (this.mlUnavailable) {
+            return this.predictWithRules();
+        }
+        if (this.predictionInFlight) {
+            return this.predictionInFlight;
+        }
+        this.predictionInFlight = this.predictWithModel().finally(() => {
+            this.predictionInFlight = undefined;
+        });
+        return this.predictionInFlight;
+    }
+    async predictWithModel() {
+        const extension = vscode.extensions.all.find(ext => ext.packageJSON.name === "ai-coding-buddy");
+        if (!extension) {
+            return this.fallbackToRules("The extension model files could not be located.");
+        }
+        const scriptPath = path.join(extension.extensionPath, "ml", "predict.py");
+        const configuredPath = vscode.workspace
+            .getConfiguration("codingBuddy")
+            .get("pythonPath", "").trim();
+        const candidates = configuredPath
+            ? [configuredPath]
+            : process.platform === "win32"
+                ? ["py", "python", "python3"]
+                : ["python3", "python"];
+        for (const executable of candidates) {
+            const prediction = await this.runPrediction(executable, scriptPath);
+            if (prediction !== undefined) {
+                return prediction;
             }
-            const scriptPath = path.join(extension.extensionPath, "ml", "predict.py");
-            const python = (0, child_process_1.spawn)("py", [scriptPath]);
+        }
+        return this.fallbackToRules("Python or the model dependencies are unavailable. Configure Python and install requirements.txt to use the Random Forest.");
+    }
+    runPrediction(executable, scriptPath) {
+        return new Promise(resolve => {
             let output = "";
-            python.stdout.on("data", (data) => {
-                output +=
-                    data.toString();
+            let spawnFailed = false;
+            const python = (0, child_process_1.spawn)(executable, [scriptPath], { windowsHide: true });
+            python.stdout.setEncoding("utf8");
+            python.stdout.on("data", (chunk) => output += chunk);
+            python.on("error", () => {
+                spawnFailed = true;
+                resolve(undefined);
             });
-            python.stderr.on("data", (data) => {
-                console.error("Python error:", data.toString());
-            });
-            python.on("error", (error) => {
-                console.error("Failed to start Python:", error);
-                resolve(1);
-            });
-            python.on("close", () => {
-                const prediction = parseInt(output.trim());
-                if (prediction === 1 ||
-                    prediction === 2 ||
-                    prediction === 3) {
+            python.on("close", exitCode => {
+                if (spawnFailed) {
+                    return;
+                }
+                const prediction = Number.parseInt(output.trim(), 10);
+                if (exitCode === 0 && [1, 2, 3].includes(prediction)) {
                     resolve(prediction);
+                    return;
                 }
-                else {
-                    console.error("Invalid Random Forest prediction:", output);
-                    resolve(1);
-                }
+                resolve(undefined);
             });
-            python.stdin.write(JSON.stringify(this.features));
-            python.stdin.end();
+            python.stdin.on("error", () => undefined);
+            python.stdin.end(JSON.stringify(this.getFeatures()));
         });
     }
+    fallbackToRules(reason) {
+        this.mlUnavailable = true;
+        console.warn(`AI Coding Buddy: ${reason}`);
+        void vscode.window.showWarningMessage(`AI Coding Buddy is using its built-in struggle estimate. ${reason}`);
+        return this.predictWithRules();
+    }
+    predictWithRules() {
+        const features = this.getFeatures();
+        if (features.failed_runs >= 4 || features.errors >= 7 ||
+            features.idle_seconds >= 90 || features.deletions >= 16) {
+            return 3;
+        }
+        if (features.failed_runs >= 1 || features.errors >= 2 ||
+            features.idle_seconds >= 35 || features.deletions >= 6 ||
+            features.rapid_edits >= 5) {
+            return 2;
+        }
+        return 1;
+    }
     reset() {
-        this.features = {
-            idle_seconds: 0,
-            errors: 0,
-            failed_runs: 0,
-            deletions: 0,
-            rapid_edits: 0
-        };
-        this.knownErrors.clear();
-        this.lastEditTime =
-            Date.now();
+        this.errorEvents.clear();
+        this.failedRunEvents.length = 0;
+        this.deletionEvents.length = 0;
+        this.rapidEditEvents.length = 0;
+        this.lastEditTime = Date.now();
     }
     dispose() {
-        clearInterval(this.idleTimer);
+        // The detector owns no background resources.
+    }
+    pruneEvents(cutoff) {
+        for (const [key, time] of this.errorEvents) {
+            if (time < cutoff) {
+                this.errorEvents.delete(key);
+            }
+        }
+        this.pruneTimes(this.failedRunEvents, cutoff);
+        this.pruneTimes(this.deletionEvents, cutoff);
+        this.pruneTimes(this.rapidEditEvents, cutoff);
+    }
+    pruneTimes(events, cutoff) {
+        while (events.length > 0 && events[0] < cutoff) {
+            events.shift();
+        }
     }
 }
 exports.StruggleDetector = StruggleDetector;

@@ -39,11 +39,15 @@ const path = __importStar(require("path"));
 class SessionRecorder {
     activeSession;
     dataPath;
+    finishing = false;
     constructor(storagePath) {
         this.dataPath = path.join(storagePath, "learning_sessions.csv");
     }
     get isActive() {
         return this.activeSession !== undefined;
+    }
+    get dataFilePath() {
+        return this.dataPath;
     }
     start(predictedLevel) {
         this.activeSession = {
@@ -78,10 +82,10 @@ class SessionRecorder {
     }
     async finish(solved, features) {
         const session = this.activeSession;
-        if (!session) {
+        if (!session || this.finishing) {
             return;
         }
-        this.activeSession = undefined;
+        this.finishing = true;
         const header = [
             "predicted_level", "manual_level", "requested_stronger_hint", "solved",
             "hint_requests", "time_to_fix_seconds", "attempts",
@@ -102,12 +106,28 @@ class SessionRecorder {
             features.deletions,
             features.rapid_edits
         ].join(",");
-        await fs.mkdir(path.dirname(this.dataPath), { recursive: true });
-        const needsHeader = await fs.access(this.dataPath).then(() => false, () => true);
-        if (needsHeader) {
-            await fs.writeFile(this.dataPath, `${header.join(",")}\n`, "utf8");
+        try {
+            await fs.mkdir(path.dirname(this.dataPath), { recursive: true });
+            const file = await fs.open(this.dataPath, "a+");
+            try {
+                const stats = await file.stat();
+                if (stats.size === 0) {
+                    await file.write(`${header.join(",")}\n`, undefined, "utf8");
+                }
+                await file.write(`${row}\n`, undefined, "utf8");
+            }
+            finally {
+                await file.close();
+            }
+            this.activeSession = undefined;
         }
-        await fs.appendFile(this.dataPath, `${row}\n`, "utf8");
+        finally {
+            this.finishing = false;
+        }
+    }
+    async clear() {
+        this.activeSession = undefined;
+        await fs.rm(this.dataPath, { force: true });
     }
 }
 exports.SessionRecorder = SessionRecorder;

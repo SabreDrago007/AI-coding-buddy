@@ -1,15 +1,16 @@
 import * as vscode from "vscode";
-import { spawn } from "child_process";
-import * as path from "path";
-
 import { StruggleDetector } from "./struggleDetector";
 import { HintEngine } from "./hintEngine";
 import { SessionRecorder } from "./sessionRecorder";
+import { CodingLanguage, languageFromDocument, LanguageRunner } from "./languageRunner";
 
 let detector: StruggleDetector;
 let hintEngine: HintEngine;
 let sessionRecorder: SessionRecorder;
+let languageRunner: LanguageRunner;
 let statusBar: vscode.StatusBarItem;
+let runOutput: vscode.OutputChannel;
+let selectedLanguage = "auto";
 
 let currentLevel = 1;
 let manualOverride = false;
@@ -26,6 +27,11 @@ export function activate(context: vscode.ExtensionContext) {
     detector = new StruggleDetector();
     hintEngine = new HintEngine();
     sessionRecorder = new SessionRecorder(context.globalStorageUri.fsPath);
+    languageRunner = new LanguageRunner();
+    const storedLanguage = context.globalState.get<string>("selectedLanguage", "auto");
+    selectedLanguage = ["auto", "python", "java", "c", "cpp"].includes(storedLanguage)
+        ? storedLanguage
+        : "auto";
 
     // STATUS BAR
     statusBar = vscode.window.createStatusBarItem(
@@ -37,6 +43,8 @@ export function activate(context: vscode.ExtensionContext) {
     updateStatusBar();
     statusBar.show();
     context.subscriptions.push(statusBar);
+    runOutput = vscode.window.createOutputChannel("AI Coding Buddy");
+    context.subscriptions.push(runOutput);
 
     // TRACK CODE EDITS
     const changeListener =
@@ -85,7 +93,7 @@ export function activate(context: vscode.ExtensionContext) {
     const controlPanelCommand =
         vscode.commands.registerCommand(
             "codingBuddy.openControlPanel",
-            () => openControlPanel()
+            () => openControlPanel(context)
         );
 
     context.subscriptions.push(controlPanelCommand);
@@ -114,7 +122,9 @@ export function activate(context: vscode.ExtensionContext) {
             // These values will not change during generation.
             const levelAtRequest = getEffectiveLevel();
             const codeAtRequest = editor.document.getText();
-            const languageAtRequest = editor.document.languageId;
+            const languageAtRequest = selectedLanguage === "auto"
+                ? editor.document.languageId
+                : selectedLanguage;
             sessionRecorder.recordHint(levelAtRequest);
 
             isGeneratingHint = true;
@@ -275,8 +285,9 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
+            const predictedLevel = await detector.predictLevel();
             detector.reset();
-            sessionRecorder.start(getEffectiveLevel());
+            sessionRecorder.start(predictedLevel);
             vscode.window.showInformationMessage(
                 "Learning session started. Use ‘AI Coding Buddy: Finish Learning Session’ when you are done."
             );
@@ -321,95 +332,61 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(finishSessionCommand);
 
-    // RUN PYTHON
-    const runPythonCommand = vscode.commands.registerCommand(
-        "codingBuddy.runPython",
+    const exportSessionsCommand = vscode.commands.registerCommand(
+        "codingBuddy.exportLearningData",
         async () => {
-            const editor = vscode.window.activeTextEditor;
-
-            if (!editor) {
-                vscode.window.showWarningMessage(
-                    "Open a Python file first."
+            try {
+                const contents = await vscode.workspace.fs.readFile(
+                    vscode.Uri.file(sessionRecorder.dataFilePath)
                 );
-                return;
-            }
-
-            if (editor.document.languageId !== "python") {
-                vscode.window.showWarningMessage(
-                    "The active file is not a Python file."
-                );
-                return;
-            }
-
-            const filePath = editor.document.fileName;
-            sessionRecorder.recordAttempt();
-
-            vscode.window.showInformationMessage(
-                "AI Coding Buddy: Running Python file..."
-            );
-
-            const python = spawn("py", [filePath], {
-                cwd: path.dirname(filePath)
-            });
-
-            python.stdout.on("data", (data: Buffer) => {
-                console.log(data.toString());
-            });
-
-            python.stderr.on("data", (data: Buffer) => {
-                console.error(data.toString());
-            });
-
-            python.on("error", (error) => {
-                console.error("Python execution error:", error);
-
-                detector.recordFailedRun();
-
-                const features = detector.getFeatures();
-
-                vscode.window.showErrorMessage(
-                    `Python failed to start. Failed runs detected: ${features.failed_runs}`
-                );
-            });
-
-            python.on("close", async (exitCode) => {
-                if (exitCode !== 0) {
-                    detector.recordFailedRun();
-
-                    const features = detector.getFeatures();
-
-                    vscode.window.showErrorMessage(
-                        `Python run failed. Failed runs detected: ${features.failed_runs}`
-                    );
-                } else {
-                    vscode.window.showInformationMessage(
-                        "Python run completed successfully."
-                    );
+                const destination = await vscode.window.showSaveDialog({
+                    saveLabel: "Export Learning Sessions",
+                    defaultUri: vscode.Uri.joinPath(
+                        context.globalStorageUri,
+                        "ai-coding-buddy-learning-sessions.csv"
+                    ),
+                    filters: { "CSV files": ["csv"] }
+                });
+                if (destination) {
+                    await vscode.workspace.fs.writeFile(destination, contents);
+                    vscode.window.showInformationMessage("Learning data exported to the selected file.");
                 }
-
-                if (!manualOverride && !isGeneratingHint) {
-                    const predictedLevel =
-                        await detector.predictLevel();
-
-                    await processAutomaticLevel(predictedLevel);
-                }
-
-                updateStatusBar();
-
-                console.log(
-                    "Current behavior features:",
-                    detector.getFeatures()
-                );
-
-                console.log(
-                    "Current struggle level:",
-                    getEffectiveLevel()
-                );
-            });
+            } catch {
+                vscode.window.showInformationMessage("No learning session data is available to export yet.");
+            }
         }
     );
+    context.subscriptions.push(exportSessionsCommand);
 
-    context.subscriptions.push(runPythonCommand);
+    const clearSessionsCommand = vscode.commands.registerCommand(
+        "codingBuddy.clearLearningData",
+        async () => {
+            const choice = await vscode.window.showWarningMessage(
+                "Delete all locally stored AI Coding Buddy learning-session data? This cannot be undone.",
+                { modal: true },
+                "Delete Data"
+            );
+            if (choice !== "Delete Data") {
+                return;
+            }
+            await sessionRecorder.clear();
+            vscode.window.showInformationMessage("Local learning-session data was deleted.");
+        }
+    );
+    context.subscriptions.push(clearSessionsCommand);
+
+    // RUN ACTIVE FILE IN THE SELECTED LANGUAGE
+    const runFileCommand = vscode.commands.registerCommand(
+        "codingBuddy.runFile",
+        () => runActiveFile(context)
+    );
+    context.subscriptions.push(runFileCommand);
+    // Keep the previous command identifier working for existing keybindings.
+    const runPythonAlias = vscode.commands.registerCommand(
+        "codingBuddy.runPython",
+        () => vscode.commands.executeCommand("codingBuddy.runFile")
+    );
+    context.subscriptions.push(runPythonAlias);
 
     // RESET
     const resetCommand = vscode.commands.registerCommand(
@@ -460,7 +437,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 // CONTROL PANEL
-function openControlPanel(): void {
+function openControlPanel(context: vscode.ExtensionContext): void {
     const panel = vscode.window.createWebviewPanel(
         "codingBuddyControlPanel",
         "AI Coding Buddy",
@@ -478,6 +455,17 @@ function openControlPanel(): void {
 
             case "automatic":
                 enableAutomaticMode();
+                break;
+
+            case "selectLanguage":
+                if (["auto", "python", "java", "c", "cpp"].includes(message.language)) {
+                    selectedLanguage = message.language;
+                    await context.globalState.update("selectedLanguage", selectedLanguage);
+                }
+                break;
+
+            case "runFile":
+                await vscode.commands.executeCommand("codingBuddy.runFile");
                 break;
 
             case "reset":
@@ -512,6 +500,64 @@ function setManualLevel(level: number): void {
     vscode.window.showInformationMessage(
         `Manual override: Level ${level}`
     );
+}
+
+async function runActiveFile(context: vscode.ExtensionContext): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage("Open a source file before running it.");
+        return;
+    }
+
+    const language: CodingLanguage | undefined = selectedLanguage === "auto"
+        ? languageFromDocument(editor.document.languageId)
+        : selectedLanguage as CodingLanguage;
+    if (!language) {
+        vscode.window.showWarningMessage(
+            "Choose Python, Java, C, or C++ in the AI Coding Buddy language dropdown to run this file."
+        );
+        return;
+    }
+
+    if (editor.document.isDirty && !(await editor.document.save())) {
+        vscode.window.showWarningMessage("Save the file before running it.");
+        return;
+    }
+
+    sessionRecorder.recordAttempt();
+    runOutput.clear();
+    runOutput.appendLine(`Running ${editor.document.fileName} as ${language}…`);
+    runOutput.show(true);
+
+    try {
+        const result = await languageRunner.run(
+            editor.document.fileName,
+            language,
+            context.globalStorageUri.fsPath
+        );
+        const output = result.output.startsWith("__NOT_FOUND__")
+            ? `A required runtime or compiler could not be started. Check that it is installed and available on PATH, or configure its path in Settings. (${result.output.slice("__NOT_FOUND__".length)})`
+            : result.output || (result.success ? "Program finished successfully with no output." : "Program exited with an error and no output.");
+        runOutput.appendLine(output);
+
+        if (!result.success) {
+            detector.recordFailedRun();
+            vscode.window.showErrorMessage("AI Coding Buddy: The program did not finish successfully. See the AI Coding Buddy output channel.");
+        } else {
+            vscode.window.showInformationMessage("AI Coding Buddy: Program finished successfully.");
+        }
+
+        if (!manualOverride && !isGeneratingHint) {
+            const predictedLevel = await detector.predictLevel();
+            await processAutomaticLevel(predictedLevel);
+        }
+        updateStatusBar();
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        runOutput.appendLine(detail);
+        detector.recordFailedRun();
+        vscode.window.showErrorMessage(`AI Coding Buddy could not run this file: ${detail}`);
+    }
 }
 
 // AUTOMATIC MODE
@@ -607,6 +653,16 @@ function createControlPanelHTML(): string {
     const level1Time = getLevelTimeLimit(1);
     const level2Time = getLevelTimeLimit(2);
     const level3Time = getLevelTimeLimit(3);
+    const languageOptions: Array<[string, string]> = [
+        ["auto", "Auto-detect"],
+        ["python", "Python"],
+        ["java", "Java"],
+        ["c", "C"],
+        ["cpp", "C++"]
+    ];
+    const languageLabel = selectedLanguage === "auto"
+        ? "Auto-detect"
+        : languageOptions.find(([value]) => value === selectedLanguage)?.[1] ?? "Auto-detect";
 
     return `
 <!DOCTYPE html>
@@ -678,11 +734,28 @@ button:hover {
     margin-top: 10px;
     font-size: 16px;
 }
+select {
+    margin-top: 8px;
+    padding: 8px;
+    min-width: 180px;
+    background: var(--vscode-dropdown-background);
+    color: var(--vscode-dropdown-foreground);
+    border: 1px solid var(--vscode-dropdown-border);
+}
 </style>
 </head>
 <body>
 <h1>🤖 AI Coding Buddy</h1>
 <div class="subtitle">Your adaptive programming tutor</div>
+
+<div class="card">
+    <strong>Programming Language</strong>
+    <div><select aria-label="Programming language" onchange="selectLanguage(this.value)">
+        ${languageOptions.map(([value, label]) => `<option value="${value}" ${selectedLanguage === value ? "selected" : ""}>${label}</option>`).join("")}
+    </select></div>
+    <p style="opacity:0.7;">Selected: ${languageLabel}. Auto-detect uses the active file's language.</p>
+    <button class="hint-button" onclick="runFile()">▶ Run Current File</button>
+</div>
 
 <div class="card">
     <div>Current Assistance Level</div>
@@ -769,6 +842,14 @@ function automatic() {
     vscode.postMessage({
         command: "automatic"
     });
+}
+
+function selectLanguage(language) {
+    vscode.postMessage({ command: "selectLanguage", language: language });
+}
+
+function runFile() {
+    vscode.postMessage({ command: "runFile" });
 }
 
 function resetBuddy() {

@@ -35,14 +35,18 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HintEngine = void 0;
 const http = __importStar(require("http"));
+const vscode = __importStar(require("vscode"));
 class HintEngine {
-    ollamaUrl = "http://127.0.0.1:11434/api/generate";
-    model = "qwen2.5-coder:7b";
     async generateHint(level, code, language) {
+        const settings = vscode.workspace.getConfiguration("codingBuddy");
+        const sourceLimit = settings.get("maxHintSourceLength", 20000);
+        const hintCode = code.length > sourceLimit
+            ? `${code.slice(0, Math.floor(sourceLimit * 0.65))}\n\n/* middle of file omitted */\n\n${code.slice(-Math.floor(sourceLimit * 0.35))}`
+            : code;
         if (level === 2) {
-            return this.generateLevel2Hint(code, language);
+            return this.generateLevel2Hint(hintCode, language);
         }
-        const prompt = this.buildPrompt(level, code, language);
+        const prompt = this.buildPrompt(level, hintCode, language);
         return this.callOllama(prompt, level);
     }
     // LEVEL 2: Strong guidance without revealing the solution.
@@ -180,8 +184,12 @@ Return the answer directly.
     }
     callOllama(prompt, level) {
         return new Promise((resolve, reject) => {
+            const settings = vscode.workspace.getConfiguration("codingBuddy");
+            const ollamaUrl = settings.get("ollamaUrl", "http://127.0.0.1:11434/api/generate");
+            const model = settings.get("ollamaModel", "qwen2.5-coder:7b");
+            const timeoutMs = settings.get("hintTimeoutMs", 120000);
             const requestBody = JSON.stringify({
-                model: this.model,
+                model,
                 prompt,
                 stream: false,
                 keep_alive: "10m",
@@ -191,18 +199,20 @@ Return the answer directly.
                         level === 2 ? 120 : 250
                 }
             });
-            const request = http.request(this.ollamaUrl, {
+            const request = http.request(new URL(ollamaUrl), {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     "Content-Length": Buffer.byteLength(requestBody)
                 },
-                timeout: 120000
+                timeout: timeoutMs
             }, (response) => {
                 let data = "";
                 response.setEncoding("utf8");
                 response.on("data", (chunk) => {
-                    data += chunk;
+                    if (data.length < 2_000_000) {
+                        data += chunk.slice(0, 2_000_000 - data.length);
+                    }
                 });
                 response.on("end", () => {
                     if (response.statusCode === undefined ||
@@ -230,10 +240,10 @@ Return the answer directly.
                 });
             });
             request.on("timeout", () => {
-                request.destroy(new Error("Hint generation timed out after 120 seconds. Please try again."));
+                request.destroy(new Error(`Hint generation timed out after ${Math.round(timeoutMs / 1000)} seconds. Please try again.`));
             });
             request.on("error", (error) => {
-                reject(new Error(`Could not connect to Ollama at ${this.ollamaUrl}. ` +
+                reject(new Error(`Could not connect to Ollama at ${ollamaUrl}. ` +
                     `Make sure Ollama is running. Details: ${error.message}`));
             });
             request.write(requestBody);

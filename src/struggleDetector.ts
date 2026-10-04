@@ -10,260 +10,185 @@ export interface BehaviorFeatures {
     rapid_edits: number;
 }
 
+const FEATURE_WINDOW_MS = 5 * 60 * 1000;
+
 export class StruggleDetector {
+    private lastEditTime = Date.now();
+    private readonly errorEvents = new Map<string, number>();
+    private readonly failedRunEvents: number[] = [];
+    private readonly deletionEvents: number[] = [];
+    private readonly rapidEditEvents: number[] = [];
+    private mlUnavailable = false;
+    private predictionInFlight: Promise<number> | undefined;
 
-    private features: BehaviorFeatures = {
-        idle_seconds: 0,
-        errors: 0,
-        failed_runs: 0,
-        deletions: 0,
-        rapid_edits: 0
-    };
+    constructor() {}
 
-    private lastEditTime: number = Date.now();
-
-    private idleTimer: NodeJS.Timeout;
-
-    private knownErrors: Set<string> = new Set();
-
-
-    constructor() {
-
-        this.idleTimer = setInterval(() => {
-
-            this.features.idle_seconds =
-                Math.floor(
-                    (Date.now() - this.lastEditTime) / 1000
-                );
-
-        }, 1000);
-    }
-
-
-    recordEdit(
-        deletedCharacters: number = 0
-    ): void {
-
+    recordEdit(deletedCharacters = 0): void {
         const now = Date.now();
-
-        const timeSinceLastEdit =
-            now - this.lastEditTime;
-
+        const timeSinceLastEdit = now - this.lastEditTime;
         this.lastEditTime = now;
 
-        this.features.idle_seconds = 0;
-
-
         if (deletedCharacters > 0) {
-
-            this.features.deletions +=
-                deletedCharacters;
+            // The training feature represents deletion operations, not characters.
+            this.deletionEvents.push(now);
         }
-
-
         if (timeSinceLastEdit < 1000) {
-
-            this.features.rapid_edits++;
+            this.rapidEditEvents.push(now);
         }
     }
 
-
-    recordError(
-        errorKey?: string
-    ): void {
-
+    recordError(errorKey?: string): void {
+        const now = Date.now();
         if (errorKey) {
-
-            if (
-                this.knownErrors.has(
-                    errorKey
-                )
-            ) {
-
+            const lastSeen = this.errorEvents.get(errorKey);
+            if (lastSeen !== undefined && now - lastSeen < FEATURE_WINDOW_MS) {
                 return;
             }
-
-            this.knownErrors.add(
-                errorKey
-            );
+            this.errorEvents.set(errorKey, now);
+        } else {
+            this.errorEvents.set(`unkeyed-${now}-${Math.random()}`, now);
         }
-
-        this.features.errors++;
-
-        console.log(
-            `AI Coding Buddy: New error detected. Total errors: ${this.features.errors}`
-        );
     }
-
 
     recordFailedRun(): void {
-
-        this.features.failed_runs++;
-
-        console.log(
-            `AI Coding Buddy: Failed run detected. Total failed runs: ${this.features.failed_runs}`
-        );
+        this.failedRunEvents.push(Date.now());
     }
-
 
     getFeatures(): BehaviorFeatures {
-
+        const now = Date.now();
+        const cutoff = now - FEATURE_WINDOW_MS;
+        this.pruneEvents(cutoff);
         return {
-            ...this.features
+            idle_seconds: Math.min(120, Math.floor((now - this.lastEditTime) / 1000)),
+            errors: Math.min(this.errorEvents.size, 10),
+            failed_runs: Math.min(this.failedRunEvents.length, 8),
+            deletions: Math.min(this.deletionEvents.length, 20),
+            rapid_edits: Math.min(this.rapidEditEvents.length, 15)
         };
     }
-
 
     async predictLevel(): Promise<number> {
+        if (this.mlUnavailable) {
+            return this.predictWithRules();
+        }
+        if (this.predictionInFlight) {
+            return this.predictionInFlight;
+        }
+        this.predictionInFlight = this.predictWithModel().finally(() => {
+            this.predictionInFlight = undefined;
+        });
+        return this.predictionInFlight;
+    }
 
-        return new Promise(
-            (resolve) => {
+    private async predictWithModel(): Promise<number> {
+        const extension = vscode.extensions.all.find(
+            ext => ext.packageJSON.name === "ai-coding-buddy"
+        );
+        if (!extension) {
+            return this.fallbackToRules("The extension model files could not be located.");
+        }
 
-                const extension =
-                    vscode.extensions.all.find(
-                        ext =>
-                            ext.packageJSON.name ===
-                            "ai-coding-buddy"
-                    );
+        const scriptPath = path.join(extension.extensionPath, "ml", "predict.py");
+        const configuredPath = vscode.workspace
+            .getConfiguration("codingBuddy")
+            .get<string>("pythonPath", "").trim();
+        const candidates = configuredPath
+            ? [configuredPath]
+            : process.platform === "win32"
+                ? ["py", "python", "python3"]
+                : ["python3", "python"];
 
+        for (const executable of candidates) {
+            const prediction = await this.runPrediction(executable, scriptPath);
+            if (prediction !== undefined) {
+                return prediction;
+            }
+        }
+        return this.fallbackToRules(
+            "Python or the model dependencies are unavailable. Configure Python and install requirements.txt to use the Random Forest."
+        );
+    }
 
-                if (!extension) {
-
-                    console.error(
-                        "AI Coding Buddy extension not found."
-                    );
-
-                    resolve(1);
-
+    private runPrediction(executable: string, scriptPath: string): Promise<number | undefined> {
+        return new Promise(resolve => {
+            let output = "";
+            let spawnFailed = false;
+            const python = spawn(executable, [scriptPath], { windowsHide: true });
+            python.stdout.setEncoding("utf8");
+            python.stdout.on("data", (chunk: string) => output += chunk);
+            python.on("error", () => {
+                spawnFailed = true;
+                resolve(undefined);
+            });
+            python.on("close", exitCode => {
+                if (spawnFailed) {
                     return;
                 }
-
-
-                const scriptPath =
-                    path.join(
-                        extension.extensionPath,
-                        "ml",
-                        "predict.py"
-                    );
-
-
-                const python =
-                    spawn(
-                        "py",
-                        [scriptPath]
-                    );
-
-
-                let output = "";
-
-
-                python.stdout.on(
-                    "data",
-                    (
-                        data: Buffer
-                    ) => {
-
-                        output +=
-                            data.toString();
-                    }
-                );
-
-
-                python.stderr.on(
-                    "data",
-                    (
-                        data: Buffer
-                    ) => {
-
-                        console.error(
-                            "Python error:",
-                            data.toString()
-                        );
-                    }
-                );
-
-
-                python.on(
-                    "error",
-                    (error) => {
-
-                        console.error(
-                            "Failed to start Python:",
-                            error
-                        );
-
-                        resolve(1);
-                    }
-                );
-
-
-                python.on(
-                    "close",
-                    () => {
-
-                        const prediction =
-                            parseInt(
-                                output.trim()
-                            );
-
-
-                        if (
-                            prediction === 1 ||
-                            prediction === 2 ||
-                            prediction === 3
-                        ) {
-
-                            resolve(
-                                prediction
-                            );
-
-                        } else {
-
-                            console.error(
-                                "Invalid Random Forest prediction:",
-                                output
-                            );
-
-                            resolve(1);
-                        }
-                    }
-                );
-
-
-                python.stdin.write(
-                    JSON.stringify(
-                        this.features
-                    )
-                );
-
-
-                python.stdin.end();
-            }
-        );
+                const prediction = Number.parseInt(output.trim(), 10);
+                if (exitCode === 0 && [1, 2, 3].includes(prediction)) {
+                    resolve(prediction);
+                    return;
+                }
+                resolve(undefined);
+            });
+            python.stdin.on("error", () => undefined);
+            python.stdin.end(JSON.stringify(this.getFeatures()));
+        });
     }
 
+    private fallbackToRules(reason: string): number {
+        this.mlUnavailable = true;
+        console.warn(`AI Coding Buddy: ${reason}`);
+        void vscode.window.showWarningMessage(
+            `AI Coding Buddy is using its built-in struggle estimate. ${reason}`
+        );
+        return this.predictWithRules();
+    }
+
+    private predictWithRules(): number {
+        const features = this.getFeatures();
+        if (
+            features.failed_runs >= 4 || features.errors >= 7 ||
+            features.idle_seconds >= 90 || features.deletions >= 16
+        ) {
+            return 3;
+        }
+        if (
+            features.failed_runs >= 1 || features.errors >= 2 ||
+            features.idle_seconds >= 35 || features.deletions >= 6 ||
+            features.rapid_edits >= 5
+        ) {
+            return 2;
+        }
+        return 1;
+    }
 
     reset(): void {
-
-        this.features = {
-            idle_seconds: 0,
-            errors: 0,
-            failed_runs: 0,
-            deletions: 0,
-            rapid_edits: 0
-        };
-
-        this.knownErrors.clear();
-
-        this.lastEditTime =
-            Date.now();
+        this.errorEvents.clear();
+        this.failedRunEvents.length = 0;
+        this.deletionEvents.length = 0;
+        this.rapidEditEvents.length = 0;
+        this.lastEditTime = Date.now();
     }
 
-
     dispose(): void {
+        // The detector owns no background resources.
+    }
 
-        clearInterval(
-            this.idleTimer
-        );
+    private pruneEvents(cutoff: number): void {
+        for (const [key, time] of this.errorEvents) {
+            if (time < cutoff) {
+                this.errorEvents.delete(key);
+            }
+        }
+        this.pruneTimes(this.failedRunEvents, cutoff);
+        this.pruneTimes(this.deletionEvents, cutoff);
+        this.pruneTimes(this.rapidEditEvents, cutoff);
+    }
+
+    private pruneTimes(events: number[], cutoff: number): void {
+        while (events.length > 0 && events[0] < cutoff) {
+            events.shift();
+        }
     }
 }

@@ -4,9 +4,20 @@
     "description": "A struggle-aware AI coding tutor for VS Code.",
     "version": "0.0.1",
     "publisher": "ai-coding-buddy",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/SabreDrago007/AI-coding-buddy.git"
+    },
+    "homepage": "https://github.com/SabreDrago007/AI-coding-buddy#readme",
+    "bugs": {
+        "url": "https://github.com/SabreDrago007/AI-coding-buddy/issues"
+    },
     "engines": {
         "vscode": "^1.90.0"
     },
+    "extensionKind": [
+        "workspace"
+    ],
     "categories": [
         "Education",
         "Machine Learning"
@@ -28,8 +39,12 @@
                 "title": "AI Coding Buddy: Get Struggle Level"
             },
             {
+                "command": "codingBuddy.runFile",
+                "title": "AI Coding Buddy: Run Current File"
+            },
+            {
                 "command": "codingBuddy.runPython",
-                "title": "AI Coding Buddy: Run Python File"
+                "title": "AI Coding Buddy: Run Python File (Legacy)"
             },
             {
                 "command": "codingBuddy.setLevel",
@@ -50,6 +65,14 @@
             {
                 "command": "codingBuddy.finishLearningSession",
                 "title": "AI Coding Buddy: Finish Learning Session"
+            },
+            {
+                "command": "codingBuddy.exportLearningData",
+                "title": "AI Coding Buddy: Export Learning Data"
+            },
+            {
+                "command": "codingBuddy.clearLearningData",
+                "title": "AI Coding Buddy: Clear Learning Data"
             }
         ],
 
@@ -79,6 +102,55 @@
                     "minimum": 1,
                     "maximum": 3600,
                     "description": "Time in seconds used while the student remains at Level 3 before the system re-evaluates the assistance level."
+                },
+                "codingBuddy.pythonPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Python executable path. Leave empty to detect py, python, or python3 automatically."
+                },
+                "codingBuddy.javaCompilerPath": {
+                    "type": "string",
+                    "default": "javac",
+                    "description": "Java compiler executable used by Run Current File."
+                },
+                "codingBuddy.javaRuntimePath": {
+                    "type": "string",
+                    "default": "java",
+                    "description": "Java runtime executable used after compilation."
+                },
+                "codingBuddy.cCompilerPath": {
+                    "type": "string",
+                    "default": "gcc",
+                    "description": "C compiler executable used by Run Current File."
+                },
+                "codingBuddy.cppCompilerPath": {
+                    "type": "string",
+                    "default": "g++",
+                    "description": "C++ compiler executable used by Run Current File."
+                },
+                "codingBuddy.ollamaUrl": {
+                    "type": "string",
+                    "default": "http://127.0.0.1:11434/api/generate",
+                    "description": "Ollama generate API URL used for hints."
+                },
+                "codingBuddy.ollamaModel": {
+                    "type": "string",
+                    "default": "qwen2.5-coder:7b",
+                    "description": "Ollama model name used for hints."
+                },
+                "codingBuddy.hintTimeoutMs": {
+                    "type": "number",
+                    "default": 120000,
+                    "minimum": 1000,
+                    "maximum": 300000,
+                    "description": "Maximum time to wait for a local model hint."
+                },
+                "codingBuddy.maxHintSourceLength": {
+                    "type": "number",
+                    "default": 20000,
+                    "minimum": 1000,
+                    "maximum": 100000,
+                    "description": "Maximum number of source characters sent in a hint request. Long files are sampled from the beginning and end."
                 }
 
             }
@@ -87,7 +159,9 @@
 
     "scripts": {
         "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./"
+        "watch": "tsc -watch -p ./",
+        "vscode:prepublish": "npm run compile",
+        "package": "npx --yes @vscode/vsce package"
     },
 
     "devDependencies": {

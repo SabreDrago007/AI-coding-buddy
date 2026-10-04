@@ -1,0 +1,11 @@
+.git/**
+.gitignore
+.github/**
+.vscode/**
+node_modules/**
+src/**
+ml/train.py
+ml/training_data.csv
+test.py
+package-lock.json
+tsconfig.json
