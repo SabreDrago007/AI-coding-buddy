@@ -1,6 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { BehaviorFeatures } from "./struggleDetector";
+import type { BehaviorFeatures } from "./domain";
 
 interface LearningSession {
     startedAt: number;

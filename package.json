@@ -1,185 +1,195 @@
 {
-    "name": "ai-coding-buddy",
-    "displayName": "AI Coding Buddy",
-    "description": "A struggle-aware AI coding tutor for VS Code.",
-    "version": "0.0.2",
-    "publisher": "ai-coding-buddy",
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/SabreDrago007/AI-coding-buddy.git"
-    },
-    "homepage": "https://github.com/SabreDrago007/AI-coding-buddy#readme",
-    "bugs": {
-        "url": "https://github.com/SabreDrago007/AI-coding-buddy/issues"
-    },
-    "engines": {
-        "vscode": "^1.90.0"
-    },
-    "extensionKind": [
-        "workspace"
-    ],
-    "capabilities": {
-        "untrustedWorkspaces": {
-            "supported": true,
-            "description": "Hint generation and struggle estimates are available in Restricted Mode. Running the active source file always requires confirmation in an untrusted workspace."
-        }
-    },
-    "categories": [
-        "Education",
-        "Machine Learning"
-    ],
-    "activationEvents": [
-        "onStartupFinished"
-    ],
-    "main": "./out/extension.js",
-
-    "contributes": {
-
-        "commands": [
-            {
-                "command": "codingBuddy.getHint",
-                "title": "AI Coding Buddy: Get Hint"
-            },
-            {
-                "command": "codingBuddy.getLevel",
-                "title": "AI Coding Buddy: Get Struggle Level"
-            },
-            {
-                "command": "codingBuddy.runFile",
-                "title": "AI Coding Buddy: Run Current File"
-            },
-            {
-                "command": "codingBuddy.runPython",
-                "title": "AI Coding Buddy: Run Python File (Legacy)"
-            },
-            {
-                "command": "codingBuddy.setLevel",
-                "title": "AI Coding Buddy: Set Manual Level"
-            },
-            {
-                "command": "codingBuddy.enableAutomatic",
-                "title": "AI Coding Buddy: Return to Automatic Detection"
-            },
-            {
-                "command": "codingBuddy.reset",
-                "title": "AI Coding Buddy: Reset"
-            },
-            {
-                "command": "codingBuddy.startLearningSession",
-                "title": "AI Coding Buddy: Start Learning Session"
-            },
-            {
-                "command": "codingBuddy.finishLearningSession",
-                "title": "AI Coding Buddy: Finish Learning Session"
-            },
-            {
-                "command": "codingBuddy.exportLearningData",
-                "title": "AI Coding Buddy: Export Learning Data"
-            },
-            {
-                "command": "codingBuddy.clearLearningData",
-                "title": "AI Coding Buddy: Clear Learning Data"
-            }
-        ],
-
-        "configuration": {
-            "title": "AI Coding Buddy",
-            "properties": {
-
-                "codingBuddy.level1TimeLimit": {
-                    "type": "number",
-                    "default": 10,
-                    "minimum": 1,
-                    "maximum": 3600,
-                    "description": "Time in seconds to remain at Level 1 before automatic escalation to Level 2 when the Random Forest continues to detect higher struggle."
-                },
-
-                "codingBuddy.level2TimeLimit": {
-                    "type": "number",
-                    "default": 30,
-                    "minimum": 1,
-                    "maximum": 3600,
-                    "description": "Time in seconds to remain at Level 2 before automatic escalation to Level 3 when the Random Forest continues to detect higher struggle."
-                },
-
-                "codingBuddy.level3TimeLimit": {
-                    "type": "number",
-                    "default": 60,
-                    "minimum": 1,
-                    "maximum": 3600,
-                    "description": "Time in seconds used while the student remains at Level 3 before the system re-evaluates the assistance level."
-                },
-                "codingBuddy.pythonPath": {
-                    "type": "string",
-                    "default": "",
-                    "scope": "machine",
-                    "description": "Python executable path. Leave empty to detect py, python, or python3 automatically."
-                },
-                "codingBuddy.javaCompilerPath": {
-                    "type": "string",
-                    "default": "javac",
-                    "scope": "machine",
-                    "description": "Java compiler executable used by Run Current File."
-                },
-                "codingBuddy.javaRuntimePath": {
-                    "type": "string",
-                    "default": "java",
-                    "scope": "machine",
-                    "description": "Java runtime executable used after compilation."
-                },
-                "codingBuddy.cCompilerPath": {
-                    "type": "string",
-                    "default": "gcc",
-                    "scope": "machine",
-                    "description": "C compiler executable used by Run Current File."
-                },
-                "codingBuddy.cppCompilerPath": {
-                    "type": "string",
-                    "default": "g++",
-                    "scope": "machine",
-                    "description": "C++ compiler executable used by Run Current File."
-                },
-                "codingBuddy.ollamaUrl": {
-                    "type": "string",
-                    "default": "http://127.0.0.1:11434/api/generate",
-                    "scope": "machine",
-                    "description": "Ollama generate API URL used for hints."
-                },
-                "codingBuddy.ollamaModel": {
-                    "type": "string",
-                    "default": "qwen2.5-coder:7b",
-                    "scope": "machine",
-                    "description": "Ollama model name used for hints."
-                },
-                "codingBuddy.hintTimeoutMs": {
-                    "type": "number",
-                    "default": 120000,
-                    "minimum": 1000,
-                    "maximum": 300000,
-                    "description": "Maximum time to wait for a local model hint."
-                },
-                "codingBuddy.maxHintSourceLength": {
-                    "type": "number",
-                    "default": 20000,
-                    "minimum": 1000,
-                    "maximum": 100000,
-                    "description": "Maximum number of source characters sent in a hint request. Long files are sampled from the beginning and end."
-                }
-
-            }
-        }
-    },
-
-    "scripts": {
-        "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./",
-        "vscode:prepublish": "npm run compile",
-        "package": "npx --yes @vscode/vsce package"
-    },
-
-    "devDependencies": {
-        "@types/node": "^22.0.0",
-        "@types/vscode": "^1.90.0",
-        "typescript": "^5.0.0"
+  "name": "ai-coding-buddy",
+  "displayName": "AI Coding Buddy",
+  "description": "A struggle-aware AI coding tutor for VS Code.",
+  "version": "0.0.3",
+  "publisher": "ai-coding-buddy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SabreDrago007/AI-coding-buddy.git"
+  },
+  "homepage": "https://github.com/SabreDrago007/AI-coding-buddy#readme",
+  "bugs": {
+    "url": "https://github.com/SabreDrago007/AI-coding-buddy/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "Hint generation and struggle estimates are available in Restricted Mode. Running the active source file always requires confirmation in an untrusted workspace."
     }
+  },
+  "categories": [
+    "Education",
+    "Machine Learning"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codingBuddy.getHint",
+        "title": "AI Coding Buddy: Get Hint"
+      },
+      {
+        "command": "codingBuddy.getLevel",
+        "title": "AI Coding Buddy: Get Struggle Level"
+      },
+      {
+        "command": "codingBuddy.runFile",
+        "title": "AI Coding Buddy: Run Current File"
+      },
+      {
+        "command": "codingBuddy.runPython",
+        "title": "AI Coding Buddy: Run Python File (Legacy)"
+      },
+      {
+        "command": "codingBuddy.setLevel",
+        "title": "AI Coding Buddy: Set Manual Level"
+      },
+      {
+        "command": "codingBuddy.enableAutomatic",
+        "title": "AI Coding Buddy: Return to Automatic Detection"
+      },
+      {
+        "command": "codingBuddy.reset",
+        "title": "AI Coding Buddy: Reset"
+      },
+      {
+        "command": "codingBuddy.startLearningSession",
+        "title": "AI Coding Buddy: Start Learning Session"
+      },
+      {
+        "command": "codingBuddy.finishLearningSession",
+        "title": "AI Coding Buddy: Finish Learning Session"
+      },
+      {
+        "command": "codingBuddy.exportLearningData",
+        "title": "AI Coding Buddy: Export Learning Data"
+      },
+      {
+        "command": "codingBuddy.clearLearningData",
+        "title": "AI Coding Buddy: Clear Learning Data"
+      },
+      {
+        "command": "codingBuddy.checkSetup",
+        "title": "AI Coding Buddy: Check Setup"
+      },
+      {
+        "command": "codingBuddy.runInteractive",
+        "title": "AI Coding Buddy: Run Interactively"
+      },
+      {
+        "command": "codingBuddy.trainFromSessions",
+        "title": "AI Coding Buddy: Train from Labeled Sessions"
+      }
+    ],
+    "configuration": {
+      "title": "AI Coding Buddy",
+      "properties": {
+        "codingBuddy.level1TimeLimit": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 3600,
+          "description": "Time in seconds to remain at Level 1 before automatic escalation to Level 2 when the Random Forest continues to detect higher struggle."
+        },
+        "codingBuddy.level2TimeLimit": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 3600,
+          "description": "Time in seconds to remain at Level 2 before automatic escalation to Level 3 when the Random Forest continues to detect higher struggle."
+        },
+        "codingBuddy.level3TimeLimit": {
+          "type": "number",
+          "default": 60,
+          "minimum": 1,
+          "maximum": 3600,
+          "description": "Time in seconds used while the student remains at Level 3 before the system re-evaluates the assistance level."
+        },
+        "codingBuddy.pythonPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Python executable path. Leave empty to detect py, python, or python3 automatically."
+        },
+        "codingBuddy.javaCompilerPath": {
+          "type": "string",
+          "default": "javac",
+          "scope": "machine",
+          "description": "Java compiler executable used by Run Current File."
+        },
+        "codingBuddy.javaRuntimePath": {
+          "type": "string",
+          "default": "java",
+          "scope": "machine",
+          "description": "Java runtime executable used after compilation."
+        },
+        "codingBuddy.cCompilerPath": {
+          "type": "string",
+          "default": "gcc",
+          "scope": "machine",
+          "description": "C compiler executable used by Run Current File."
+        },
+        "codingBuddy.cppCompilerPath": {
+          "type": "string",
+          "default": "g++",
+          "scope": "machine",
+          "description": "C++ compiler executable used by Run Current File."
+        },
+        "codingBuddy.ollamaUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:11434/api/generate",
+          "scope": "machine",
+          "description": "Ollama generate API URL used for hints."
+        },
+        "codingBuddy.ollamaModel": {
+          "type": "string",
+          "default": "qwen2.5-coder:7b",
+          "scope": "machine",
+          "description": "Ollama model name used for hints."
+        },
+        "codingBuddy.hintTimeoutMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1000,
+          "maximum": 300000,
+          "description": "Maximum time to wait for a local model hint."
+        },
+        "codingBuddy.maxHintSourceLength": {
+          "type": "number",
+          "default": 20000,
+          "minimum": 1000,
+          "maximum": 100000,
+          "description": "Maximum number of source characters sent in a hint request. Long files are sampled from the beginning and end."
+        },
+        "codingBuddy.modelPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional locally trained model path. Custom models require a matching SHA-256 sidecar. Leave empty to use the bundled model."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test",
+    "vscode:prepublish": "npm run compile",
+    "package": "npx --yes @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.0.0"
+  }
 }

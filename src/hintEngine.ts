@@ -2,6 +2,7 @@
 import * as http from "http";
 import * as https from "https";
 import * as vscode from "vscode";
+import { sampleHintSource } from "./domain";
 
 export class HintEngine {
     async generateHint(
@@ -15,9 +16,7 @@ export class HintEngine {
         }
         const settings = vscode.workspace.getConfiguration("codingBuddy");
         const sourceLimit = settings.get<number>("maxHintSourceLength", 20000);
-        const hintCode = code.length > sourceLimit
-            ? `${code.slice(0, Math.floor(sourceLimit * 0.65))}\n\n/* middle of file omitted */\n\n${code.slice(-Math.floor(sourceLimit * 0.35))}`
-            : code;
+        const hintCode = sampleHintSource(code, sourceLimit);
         if (level === 2) {
             return this.generateLevel2Hint(hintCode, language, endpoint);
         }

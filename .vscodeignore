@@ -7,5 +7,6 @@ src/**
 ml/train.py
 ml/training_data.csv
 test.py
+tests/**
 package-lock.json
 tsconfig.json

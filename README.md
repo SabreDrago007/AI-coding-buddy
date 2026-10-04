@@ -30,7 +30,7 @@ The extension does not bundle Ollama, language runtimes, compilers, or Python ML
 | **2** | Specific debugging guidance without executable code |
 | **3** | Direct explanation and corrected code when useful |
 
-Use the status bar to open the theme-aware control panel. It updates in place as the level changes, supports keyboard focus, and respects reduced-motion settings. The programming-language dropdown supports Auto-detect, Python, Java, C, and C++. The selection controls both hint context and **Run Current File**. Auto-detect follows the active editor's language mode.
+Use the status bar to open the theme-aware control panel. It updates in place as the level changes, supports keyboard focus, and respects reduced-motion settings. The programming-language dropdown supports Auto-detect, Python, Java, C, and C++. “Run Interactively” launches in a VS Code terminal for stdin input; “Run Current File” uses a bounded output/time runner. Both execute with your user permissions. Use “Check Setup” to inspect local tools and the optional Ollama model. The selection controls both hint context and **Run Current File**. Auto-detect follows the active editor's language mode.
 
 ## Privacy
 
@@ -40,7 +40,7 @@ Learning-session recording is separate and opt-in: start and finish each session
 
 ## Learning sessions and model limitations
 
-Rows include the starting predicted level, last manual level, whether the user explicitly requested stronger help, solved status, elapsed time for solved sessions, run attempts, and behavioral features. These rows are not used to retrain the model yet. The bundled Random Forest was trained on synthetic prototype data, so its results do not establish real-world accuracy. Level 2's output check is heuristic rather than a guarantee.
+Rows include the starting predicted level, last manual level, whether the user explicitly requested stronger help, solved status, elapsed time for solved sessions, run attempts, and behavioral features. Use “AI Coding Buddy: Train from Labeled Sessions” to create an optional model locally. Training ignores rows without an explicitly chosen manual level and requires at least 30 labeled sessions with 5 at each level. It writes a separate model in VS Code global storage and a SHA-256 checksum; source CSV data is never uploaded. Manual levels represent user preference, not objective ground truth, and a small personal dataset may overfit. The bundled Random Forest was trained on synthetic prototype data, so its results do not establish real-world accuracy. Level 2's output check is heuristic rather than a guarantee.
 
 ## Development
 
@@ -50,3 +50,4 @@ npm run compile
 ```
 
 Open the folder in VS Code and press **F5** to launch an Extension Development Host. `npm run package` compiles and creates a VSIX through `@vscode/vsce`.
+

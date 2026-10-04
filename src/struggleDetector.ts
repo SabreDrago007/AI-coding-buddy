@@ -1,14 +1,8 @@
 import * as vscode from "vscode";
 import { spawn } from "child_process";
 import * as path from "path";
-
-export interface BehaviorFeatures {
-    idle_seconds: number;
-    errors: number;
-    failed_runs: number;
-    deletions: number;
-    rapid_edits: number;
-}
+import { BehaviorFeatures, predictWithRules } from "./domain";
+export { BehaviorFeatures } from "./domain";
 
 const FEATURE_WINDOW_MS = 5 * 60 * 1000;
 
@@ -69,7 +63,7 @@ export class StruggleDetector {
 
     async predictLevel(): Promise<number> {
         if (this.mlUnavailable) {
-            return this.predictWithRules();
+            return predictWithRules(this.getFeatures());
         }
         if (this.predictionInFlight) {
             return this.predictionInFlight;
@@ -99,7 +93,8 @@ export class StruggleDetector {
                 : ["python3", "python"];
 
         for (const executable of candidates) {
-            const prediction = await this.runPrediction(executable, scriptPath);
+            const modelPath = vscode.workspace.getConfiguration("codingBuddy").get<string>("modelPath", "").trim();
+            const prediction = await this.runPrediction(executable, scriptPath, modelPath);
             if (prediction !== undefined) {
                 return prediction;
             }
@@ -109,11 +104,13 @@ export class StruggleDetector {
         );
     }
 
-    private runPrediction(executable: string, scriptPath: string): Promise<number | undefined> {
+    private runPrediction(executable: string, scriptPath: string, modelPath: string): Promise<number | undefined> {
         return new Promise(resolve => {
             let output = "";
             let spawnFailed = false;
-            const python = spawn(executable, [scriptPath], { windowsHide: true });
+            const env = { ...process.env };
+            if (modelPath) env.CODING_BUDDY_MODEL_PATH = modelPath;
+            const python = spawn(executable, [scriptPath], { windowsHide: true, env });
             python.stdout.setEncoding("utf8");
             python.stdout.on("data", (chunk: string) => output += chunk);
             python.on("error", () => {
@@ -142,25 +139,7 @@ export class StruggleDetector {
         void vscode.window.showWarningMessage(
             `AI Coding Buddy is using its built-in struggle estimate. ${reason}`
         );
-        return this.predictWithRules();
-    }
-
-    private predictWithRules(): number {
-        const features = this.getFeatures();
-        if (
-            features.failed_runs >= 4 || features.errors >= 7 ||
-            features.idle_seconds >= 90 || features.deletions >= 16
-        ) {
-            return 3;
-        }
-        if (
-            features.failed_runs >= 1 || features.errors >= 2 ||
-            features.idle_seconds >= 35 || features.deletions >= 6 ||
-            features.rapid_edits >= 5
-        ) {
-            return 2;
-        }
-        return 1;
+        return predictWithRules(this.getFeatures());
     }
 
     reset(): void {

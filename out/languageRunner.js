@@ -33,22 +33,61 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LanguageRunner = void 0;
-exports.languageFromDocument = languageFromDocument;
+exports.LanguageRunner = exports.languageFromDocument = void 0;
 const fs = __importStar(require("fs/promises"));
 const path = __importStar(require("path"));
 const child_process_1 = require("child_process");
 const vscode = __importStar(require("vscode"));
-function languageFromDocument(languageId) {
-    switch (languageId.toLowerCase()) {
-        case "python": return "python";
-        case "java": return "java";
-        case "c": return "c";
-        case "cpp": return "cpp";
-        default: return undefined;
-    }
-}
+var domain_1 = require("./domain");
+Object.defineProperty(exports, "languageFromDocument", { enumerable: true, get: function () { return domain_1.languageFromDocument; } });
 class LanguageRunner {
+    async runPythonScript(scriptPath, args, cwd) {
+        const configured = vscode.workspace.getConfiguration("codingBuddy").get("pythonPath", "").trim();
+        const candidates = configured ? [configured] : process.platform === "win32" ? ["py", "python", "python3"] : ["python3", "python"];
+        return this.tryRuntimes(candidates, scriptPath, cwd, args);
+    }
+    async prepareInteractive(sourcePath, language, storagePath) {
+        const folder = path.dirname(sourcePath);
+        const config = vscode.workspace.getConfiguration("codingBuddy");
+        if (language === "python") {
+            const configured = config.get("pythonPath", "").trim();
+            const candidates = configured ? [configured] : process.platform === "win32" ? ["py", "python", "python3"] : ["python3", "python"];
+            for (const executable of candidates) {
+                const result = await this.execute(executable, ["--version"], folder);
+                if (!result.output.startsWith("__NOT_FOUND__"))
+                    return { executable, args: [sourcePath], cwd: folder, cleanup: async () => undefined };
+            }
+            throw new Error("Python was not found. Install Python 3 or set AI Coding Buddy › Python Path in Settings.");
+        }
+        const buildRoot = path.join(storagePath, "build");
+        await fs.mkdir(buildRoot, { recursive: true });
+        const buildPath = await fs.mkdtemp(path.join(buildRoot, "interactive-"));
+        if (language === "java") {
+            const compiler = config.get("javaCompilerPath", "javac").trim();
+            const compile = await this.execute(compiler, ["-d", buildPath, "-sourcepath", folder, sourcePath], folder);
+            if (!compile.success) {
+                await fs.rm(buildPath, { recursive: true, force: true });
+                throw new Error(compile.output || "Java compilation failed.");
+            }
+            const source = await fs.readFile(sourcePath, "utf8");
+            const packageName = source.match(/^\s*package\s+([\w.]+)\s*;/m)?.[1];
+            const className = path.basename(sourcePath, path.extname(sourcePath));
+            return {
+                executable: config.get("javaRuntimePath", "java").trim(),
+                args: ["-cp", buildPath, packageName ? `${packageName}.${className}` : className],
+                cwd: folder,
+                cleanup: () => fs.rm(buildPath, { recursive: true, force: true })
+            };
+        }
+        const outputPath = path.join(buildPath, `${path.basename(sourcePath, path.extname(sourcePath))}${process.platform === "win32" ? ".exe" : ""}`);
+        const compiler = config.get(language === "c" ? "cCompilerPath" : "cppCompilerPath", language === "c" ? "gcc" : "g++").trim();
+        const compile = await this.execute(compiler, [sourcePath, "-o", outputPath], folder);
+        if (!compile.success) {
+            await fs.rm(buildPath, { recursive: true, force: true });
+            throw new Error(compile.output || `${language} compilation failed.`);
+        }
+        return { executable: outputPath, args: [], cwd: folder, cleanup: () => fs.rm(buildPath, { recursive: true, force: true }) };
+    }
     async run(sourcePath, language, storagePath) {
         const folder = path.dirname(sourcePath);
         const config = vscode.workspace.getConfiguration("codingBuddy");
@@ -98,9 +137,9 @@ class LanguageRunner {
             await fs.rm(outputPath, { force: true }).catch(() => undefined);
         }
     }
-    async tryRuntimes(candidates, scriptPath, cwd) {
+    async tryRuntimes(candidates, scriptPath, cwd, extraArgs = []) {
         for (const executable of candidates) {
-            const result = await this.execute(executable, [scriptPath], cwd);
+            const result = await this.execute(executable, [scriptPath, ...extraArgs], cwd);
             if (!result.output.startsWith("__NOT_FOUND__")) {
                 return result;
             }

@@ -2,6 +2,7 @@ import sys
 import json
 import joblib
 import os
+import hashlib
 import pandas as pd
 
 
@@ -15,10 +16,18 @@ def main():
 
     features = json.loads(input_data)
 
-    model_path = os.path.join(
-        os.path.dirname(__file__),
-        "struggle_model.pkl"
+    model_path = os.environ.get("CODING_BUDDY_MODEL_PATH") or os.path.join(
+        os.path.dirname(__file__), "struggle_model.pkl"
     )
+    if os.environ.get("CODING_BUDDY_MODEL_PATH"):
+        checksum_path = model_path + ".sha256"
+        try:
+            expected = open(checksum_path, encoding="ascii").read().strip()
+            actual = hashlib.sha256(open(model_path, "rb").read()).hexdigest()
+        except OSError as error:
+            raise SystemExit("Custom model or checksum file is unavailable: " + str(error))
+        if not expected or actual != expected:
+            raise SystemExit("Custom model checksum did not match; restore the bundled model in Settings.")
 
     model = joblib.load(model_path)
 

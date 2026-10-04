@@ -37,6 +37,7 @@ exports.StruggleDetector = void 0;
 const vscode = __importStar(require("vscode"));
 const child_process_1 = require("child_process");
 const path = __importStar(require("path"));
+const domain_1 = require("./domain");
 const FEATURE_WINDOW_MS = 5 * 60 * 1000;
 class StruggleDetector {
     lastEditTime = Date.now();
@@ -89,7 +90,7 @@ class StruggleDetector {
     }
     async predictLevel() {
         if (this.mlUnavailable) {
-            return this.predictWithRules();
+            return (0, domain_1.predictWithRules)(this.getFeatures());
         }
         if (this.predictionInFlight) {
             return this.predictionInFlight;
@@ -114,18 +115,22 @@ class StruggleDetector {
                 ? ["py", "python", "python3"]
                 : ["python3", "python"];
         for (const executable of candidates) {
-            const prediction = await this.runPrediction(executable, scriptPath);
+            const modelPath = vscode.workspace.getConfiguration("codingBuddy").get("modelPath", "").trim();
+            const prediction = await this.runPrediction(executable, scriptPath, modelPath);
             if (prediction !== undefined) {
                 return prediction;
             }
         }
         return this.fallbackToRules("Python or the model dependencies are unavailable. Configure Python and install requirements.txt to use the Random Forest.");
     }
-    runPrediction(executable, scriptPath) {
+    runPrediction(executable, scriptPath, modelPath) {
         return new Promise(resolve => {
             let output = "";
             let spawnFailed = false;
-            const python = (0, child_process_1.spawn)(executable, [scriptPath], { windowsHide: true });
+            const env = { ...process.env };
+            if (modelPath)
+                env.CODING_BUDDY_MODEL_PATH = modelPath;
+            const python = (0, child_process_1.spawn)(executable, [scriptPath], { windowsHide: true, env });
             python.stdout.setEncoding("utf8");
             python.stdout.on("data", (chunk) => output += chunk);
             python.on("error", () => {
@@ -151,20 +156,7 @@ class StruggleDetector {
         this.mlUnavailable = true;
         console.warn(`AI Coding Buddy: ${reason}`);
         void vscode.window.showWarningMessage(`AI Coding Buddy is using its built-in struggle estimate. ${reason}`);
-        return this.predictWithRules();
-    }
-    predictWithRules() {
-        const features = this.getFeatures();
-        if (features.failed_runs >= 4 || features.errors >= 7 ||
-            features.idle_seconds >= 90 || features.deletions >= 16) {
-            return 3;
-        }
-        if (features.failed_runs >= 1 || features.errors >= 2 ||
-            features.idle_seconds >= 35 || features.deletions >= 6 ||
-            features.rapid_edits >= 5) {
-            return 2;
-        }
-        return 1;
+        return (0, domain_1.predictWithRules)(this.getFeatures());
     }
     reset() {
         this.errorEvents.clear();
