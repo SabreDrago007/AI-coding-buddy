@@ -49,7 +49,7 @@ let sessionRecorder;
 let languageRunner;
 let statusBar;
 let runOutput;
-let controlPanel;
+let controlView;
 let selectedLanguage = "auto";
 let currentLevel = 1;
 let manualOverride = false;
@@ -93,8 +93,12 @@ function activate(context) {
     if (initialEditor)
         detector.recordCursorMovement(initialEditor.document.uri.toString(), initialEditor.selection.active.line);
     const activeEditorListener = vscode.window.onDidChangeActiveTextEditor(editor => {
-        if (editor)
-            detector.recordCursorMovement(editor.document.uri.toString(), editor.selection.active.line);
+        if (!editor)
+            return;
+        detector.recordCursorMovement(editor.document.uri.toString(), editor.selection.active.line);
+        if ((0, domain_1.languageFromDocument)(editor.document.languageId)) {
+            void vscode.commands.executeCommand("workbench.view.extension.codingBuddy");
+        }
     });
     context.subscriptions.push(activeEditorListener);
     const selectionListener = vscode.window.onDidChangeTextEditorSelection(event => {
@@ -120,9 +124,53 @@ function activate(context) {
         }
     });
     context.subscriptions.push(diagnosticListener);
-    // CONTROL PANEL
-    const controlPanelCommand = vscode.commands.registerCommand("codingBuddy.openControlPanel", () => openControlPanel(context));
+    // SIDEBAR TUTOR
+    const sidebarProvider = {
+        resolveWebviewView: (view) => {
+            controlView = view;
+            view.webview.options = { enableScripts: true };
+            view.webview.html = createControlPanelHTML((0, crypto_1.randomBytes)(16).toString("base64"));
+            view.onDidDispose(() => {
+                if (controlView === view)
+                    controlView = undefined;
+            });
+            view.webview.onDidReceiveMessage(message => handleSidebarMessage(context, message));
+            updateControlPanelState();
+        }
+    };
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider("codingBuddy.sidebar", sidebarProvider, { webviewOptions: { retainContextWhenHidden: true } }));
+    const controlPanelCommand = vscode.commands.registerCommand("codingBuddy.openControlPanel", async () => {
+        await vscode.commands.executeCommand("workbench.view.extension.codingBuddy");
+        await vscode.commands.executeCommand("workbench.views.codingBuddy.sidebar.focus");
+        updateControlPanelState();
+    });
     context.subscriptions.push(controlPanelCommand);
+    if (vscode.window.activeTextEditor && (0, domain_1.languageFromDocument)(vscode.window.activeTextEditor.document.languageId)) {
+        void vscode.commands.executeCommand("workbench.view.extension.codingBuddy");
+    }
+    const tutorialCommand = vscode.commands.registerCommand("codingBuddy.startTutorial", () => startQuickTutorial());
+    context.subscriptions.push(tutorialCommand);
+    const languageCommand = vscode.commands.registerCommand("codingBuddy.selectLanguage", async () => {
+        const choices = [
+            { label: "Auto-detect", value: "auto" },
+            { label: "Python", value: "python" },
+            { label: "Java", value: "java" },
+            { label: "C", value: "c" },
+            { label: "C++", value: "cpp" }
+        ];
+        const selected = await vscode.window.showQuickPick(choices, {
+            placeHolder: "Choose the language for hints and running code"
+        });
+        if (!selected)
+            return;
+        selectedLanguage = selected.value;
+        await context.globalState.update("selectedLanguage", selectedLanguage);
+        updateStatusBar();
+        vscode.window.showInformationMessage(`AI Coding Buddy language: ${selected.label}`);
+    });
+    context.subscriptions.push(languageCommand);
+    const timerLimitsCommand = vscode.commands.registerCommand("codingBuddy.configureTimeLimits", () => configureLevelTimeLimits());
+    context.subscriptions.push(timerLimitsCommand);
     // GET HINT
     const hintCommand = vscode.commands.registerCommand("codingBuddy.getHint", async () => {
         if (isGeneratingHint) {
@@ -404,70 +452,61 @@ function activate(context) {
         dispose: () => detector.dispose()
     });
 }
-// CONTROL PANEL
-function openControlPanel(context) {
-    if (controlPanel) {
-        controlPanel.reveal(vscode.ViewColumn.Beside);
-        updateControlPanelState();
+// SIDEBAR ACTIONS
+async function handleSidebarMessage(context, message) {
+    if (!message || typeof message !== "object") {
         return;
     }
-    const nonce = (0, crypto_1.randomBytes)(16).toString("base64");
-    const panel = vscode.window.createWebviewPanel("codingBuddyControlPanel", "AI Coding Buddy", vscode.ViewColumn.Beside, { enableScripts: true, localResourceRoots: [] });
-    controlPanel = panel;
-    panel.onDidDispose(() => {
-        if (controlPanel === panel) {
-            controlPanel = undefined;
-        }
-    });
-    panel.webview.html = createControlPanelHTML(nonce);
-    panel.webview.onDidReceiveMessage(async (message) => {
-        if (!message || typeof message !== "object") {
-            return;
-        }
-        switch (message.command) {
-            case "setLevel":
-                if ((0, domain_1.isAssistanceLevel)(message.level)) {
-                    setManualLevel(message.level);
-                }
-                break;
-            case "automatic":
-                enableAutomaticMode();
-                break;
-            case "selectLanguage":
-                if ((0, domain_1.isCodingLanguage)(message.language)) {
-                    selectedLanguage = message.language;
-                    await context.globalState.update("selectedLanguage", selectedLanguage);
-                    updateStatusBar();
-                }
-                break;
-            case "runFile":
-                await vscode.commands.executeCommand("codingBuddy.runFile");
-                break;
-            case "runInteractive":
-                await vscode.commands.executeCommand("codingBuddy.runInteractive");
-                break;
-            case "checkSetup":
-                await vscode.commands.executeCommand("codingBuddy.checkSetup");
-                break;
-            case "trainSessions":
-                await vscode.commands.executeCommand("codingBuddy.trainFromSessions");
-                break;
-            case "analyzeLogic":
-                await vscode.commands.executeCommand("codingBuddy.checkLogic", typeof message.taskDescription === "string" ? message.taskDescription : "");
-                break;
-            case "reset":
-                detector.reset();
-                manualOverride = false;
-                currentLevel = 1;
-                levelStartedAt = Date.now();
+    const request = message;
+    switch (request.command) {
+        case "setLevel":
+            if ((0, domain_1.isAssistanceLevel)(request.level)) {
+                setManualLevel(request.level);
+            }
+            break;
+        case "automatic":
+            enableAutomaticMode();
+            break;
+        case "selectLanguage":
+            if ((0, domain_1.isCodingLanguage)(request.language)) {
+                selectedLanguage = request.language;
+                await context.globalState.update("selectedLanguage", selectedLanguage);
                 updateStatusBar();
-                break;
-            case "getHint":
-                await vscode.commands.executeCommand("codingBuddy.getHint");
-                break;
-        }
-        updateControlPanelState();
-    });
+            }
+            break;
+        case "tutorial":
+            await vscode.commands.executeCommand("codingBuddy.startTutorial");
+            break;
+        case "configureTimeLimits":
+            await vscode.commands.executeCommand("codingBuddy.configureTimeLimits");
+            break;
+        case "runFile":
+            await vscode.commands.executeCommand("codingBuddy.runFile");
+            break;
+        case "runInteractive":
+            await vscode.commands.executeCommand("codingBuddy.runInteractive");
+            break;
+        case "checkSetup":
+            await vscode.commands.executeCommand("codingBuddy.checkSetup");
+            break;
+        case "trainSessions":
+            await vscode.commands.executeCommand("codingBuddy.trainFromSessions");
+            break;
+        case "analyzeLogic":
+            await vscode.commands.executeCommand("codingBuddy.checkLogic", typeof request.taskDescription === "string" ? request.taskDescription : "");
+            break;
+        case "reset":
+            detector.reset();
+            manualOverride = false;
+            currentLevel = 1;
+            levelStartedAt = Date.now();
+            updateStatusBar();
+            break;
+        case "getHint":
+            await vscode.commands.executeCommand("codingBuddy.getHint");
+            break;
+    }
+    updateControlPanelState();
 }
 // MANUAL LEVEL
 function setManualLevel(level) {
@@ -481,6 +520,78 @@ function setManualLevel(level) {
     levelStartedAt = Date.now();
     updateStatusBar();
     vscode.window.showInformationMessage(`Manual override: Level ${level}`);
+}
+async function configureLevelTimeLimits() {
+    const config = vscode.workspace.getConfiguration("codingBuddy");
+    const updates = [];
+    for (const [key, label, fallback] of [
+        ["level1TimeLimit", "Level 1", 10],
+        ["level2TimeLimit", "Level 2", 30],
+        ["level3TimeLimit", "Level 3", 60]
+    ]) {
+        const value = await vscode.window.showInputBox({
+            title: `Configure ${label} recheck interval`,
+            prompt: "Seconds before the next evidence-based level check. Time alone never increases assistance.",
+            value: String(config.get(key, fallback)),
+            validateInput: input => {
+                const seconds = Number(input);
+                return Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600
+                    ? undefined
+                    : "Enter a whole number from 1 to 3600 seconds.";
+            }
+        });
+        if (value === undefined)
+            return;
+        updates.push([key, label, Number(value)]);
+    }
+    for (const [key, , seconds] of updates) {
+        await config.update(key, seconds, vscode.ConfigurationTarget.Global);
+    }
+    updateControlPanelState();
+    vscode.window.showInformationMessage("AI Coding Buddy level time limits updated.");
+}
+async function startQuickTutorial() {
+    const steps = [
+        {
+            title: "1 of 5 · Open the tutor panel",
+            message: "Select the AI Coding Buddy lightbulb icon in the Activity Bar to open its sidebar. It stays beside your code and contains language, level, timer, hint, logic review, and run controls."
+        },
+        {
+            title: "2 of 5 · Choose a language",
+            message: "Set Python, Java, C, or C++ in the Programming language menu. Auto-detect follows the active editor. This choice is used for hints and running the current file."
+        },
+        {
+            title: "3 of 5 · Pick how much help you want",
+            message: "Level 1 gives a broad hint, Level 2 gives a more focused strategy, and Level 3 gives a direct answer with an explanation. Choose Automatic to let editor evidence guide the level."
+        },
+        {
+            title: "4 of 5 · Set recheck intervals",
+            message: "Use ‘Configure Level Time Limits’ to set each level’s minimum recheck interval from 1 to 3600 seconds. Waiting alone never raises your assistance level."
+        },
+        {
+            title: "5 of 5 · Ask for help",
+            message: "Use Get a hint for coaching or Check Code Logic to review algorithm intent and invariants. Ollama must be running locally for generated guidance."
+        }
+    ];
+    for (let index = 0; index < steps.length; index++) {
+        const step = steps[index];
+        const actions = index === 0
+            ? ["Next", "Open Sidebar", "Finish"]
+            : index === steps.length - 1
+                ? ["Finish", "Back"]
+                : ["Next", "Back", "Finish"];
+        const action = await vscode.window.showInformationMessage(step.message, { modal: true, detail: step.title }, ...actions);
+        if (action === "Open Sidebar") {
+            await vscode.commands.executeCommand("codingBuddy.openControlPanel");
+            index--;
+        }
+        else if (action === "Back") {
+            index = Math.max(-1, index - 2);
+        }
+        else if (action !== "Next") {
+            return;
+        }
+    }
 }
 async function runActiveFile(context) {
     if (isRunningFile) {
@@ -782,10 +893,10 @@ function updateStatusBar() {
     updateControlPanelState();
 }
 function updateControlPanelState() {
-    if (!controlPanel) {
+    if (!controlView) {
         return;
     }
-    void controlPanel.webview.postMessage({
+    void controlView.webview.postMessage({
         type: "state",
         level: getEffectiveLevel(),
         mode: manualOverride ? "Manual" : "Automatic",
@@ -825,7 +936,7 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     max-width: 760px;
     margin: 0 auto;
-    padding: 20px clamp(14px, 4vw, 32px) 32px;
+    padding: 12px 10px 24px;
     color: var(--vscode-foreground);
     background: var(--vscode-editor-background);
     line-height: 1.5;
@@ -839,7 +950,7 @@ h1 {
     margin-bottom: 20px;
 }
 .card {
-    padding: 18px;
+    padding: 13px;
     margin-bottom: 14px;
     border-radius: 12px;
     background: var(--vscode-textBlockQuote-background);
@@ -865,7 +976,7 @@ textarea {
     font:inherit; line-height:1.45;
 }
 textarea:focus-visible { outline:2px solid var(--vscode-focusBorder); outline-offset:1px; }
-.button-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.button-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
 .button-row .hint-button { margin-top:0; }
 .secondary-button { background:var(--vscode-button-secondaryBackground); color:var(--vscode-button-secondaryForeground); }
 .secondary-button:hover:not(:disabled) { background:var(--vscode-button-secondaryHoverBackground); }
@@ -889,7 +1000,7 @@ details[open] summary { margin-bottom:8px; }
 }
 .buttons {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
     gap: 8px;
     margin-top: 15px;
 }
@@ -967,6 +1078,12 @@ select {
 </div>
 
 <div class="card review-card">
+    <div class="section-kicker">Hint</div><div class="card-title">Get help with your code</div>
+    <p class="helper">Ask for guidance at your current assistance level.</p>
+    <button class="hint-button" id="getHintButton">Get a hint</button>
+</div>
+
+<div class="card review-card">
     <div class="section-kicker">Code review</div>
     <h2 class="review-title">Check algorithm and logic</h2>
     <p class="review-copy">Reviews DSA intent, invariants, indexing, control flow, and language-specific APIs. The task is optional; if it is blank, AI Coding Buddy will infer the goal and ask you to confirm when uncertain.</p>
@@ -1020,12 +1137,13 @@ select {
         <div class="time-tile">Level 3<strong><span id="level3Time">${level3Time}</span>s</strong></div>
     </div>
     <p class="helper">These are minimum recheck intervals after a level change. Time passing alone never raises assistance; editor evidence is required.</p>
+    <button class="hint-button secondary-button" id="configureTimesButton">Configure level time limits</button>
 </div>
 
 <div class="card">
     <div class="section-kicker">Actions</div><div class="card-title">Work with your code</div>
     <div class="button-row" style="margin-top:10px">
-        <button class="hint-button secondary-button" id="getHintButton">Get a hint</button>
+        <button class="hint-button secondary-button" id="tutorialButton">Start quick tutorial</button>
         <button class="hint-button secondary-button" id="runButton">Run current file</button>
         <button class="hint-button secondary-button" id="interactiveButton">Run interactively</button>
     </div>
@@ -1056,6 +1174,8 @@ document.getElementById("automaticButton").addEventListener("click", automatic);
 document.getElementById("getHintButton").addEventListener("click", getHint);
 document.getElementById("logicButton").addEventListener("click", checkLogic);
 document.getElementById("resetButton").addEventListener("click", resetBuddy);
+document.getElementById("tutorialButton").addEventListener("click", startTutorial);
+document.getElementById("configureTimesButton").addEventListener("click", configureTimeLimits);
 
 function setLevel(level) {
     vscode.postMessage({
@@ -1107,6 +1227,14 @@ function checkLogic() {
     button.disabled = true;
     button.textContent = "Reviewing code…";
     vscode.postMessage({ command: "analyzeLogic", taskDescription: document.getElementById("taskDescription").value });
+}
+
+function startTutorial() {
+    vscode.postMessage({ command: "tutorial" });
+}
+
+function configureTimeLimits() {
+    vscode.postMessage({ command: "configureTimeLimits" });
 }
 
 window.addEventListener("message", (event) => {
@@ -1216,3 +1344,4 @@ function deactivate() {
         detector.dispose();
     }
 }
+

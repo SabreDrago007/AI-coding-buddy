@@ -2,7 +2,7 @@
   "name": "ai-coding-buddy",
   "displayName": "AI Coding Buddy",
   "description": "A struggle-aware AI coding tutor for VS Code.",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "publisher": "ai-coding-buddy",
   "repository": {
     "type": "git",
@@ -37,6 +37,22 @@
       {
         "command": "codingBuddy.getHint",
         "title": "AI Coding Buddy: Get Hint"
+      },
+      {
+        "command": "codingBuddy.openControlPanel",
+        "title": "AI Coding Buddy: Open Sidebar"
+      },
+      {
+        "command": "codingBuddy.startTutorial",
+        "title": "AI Coding Buddy: Start Quick Tutorial"
+      },
+      {
+        "command": "codingBuddy.selectLanguage",
+        "title": "AI Coding Buddy: Select Programming Language"
+      },
+      {
+        "command": "codingBuddy.configureTimeLimits",
+        "title": "AI Coding Buddy: Configure Level Time Limits"
       },
       {
         "command": "codingBuddy.getLevel",
@@ -182,6 +198,24 @@
           "description": "Optional locally trained model path. Custom models require a matching SHA-256 sidecar. Leave empty to use the bundled model."
         }
       }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codingBuddy",
+          "title": "AI Coding Buddy",
+          "icon": "resources/ai-coding-buddy.svg"
+        }
+      ]
+    },
+    "views": {
+      "codingBuddy": [
+        {
+          "id": "codingBuddy.sidebar",
+          "name": "AI Coding Buddy",
+          "type": "webview"
+        }
+      ]
     }
   },
   "scripts": {
@@ -197,3 +231,4 @@
     "typescript": "^5.0.0"
   }
 }
+
