@@ -744,10 +744,10 @@ async function checkLogic(context: vscode.ExtensionContext): Promise<void> {
         return;
     }
     const language = selectedLanguage === "auto" ? editor.document.languageId : selectedLanguage;
-    const intendedBehavior = await vscode.window.showInputBox({
+    let intendedBehavior = await vscode.window.showInputBox({
         title: "Check Code Logic",
-        prompt: "Describe the required behavior or postcondition. This is required to distinguish similar algorithms.",
-        placeHolder: "For example: mirror every node's left and right subtrees; do not just visit the nodes",
+        prompt: "What DSA task should this code solve? Optional; AI Coding Buddy will infer it from names, comments, and code structure.",
+        placeHolder: "For example: invert a binary tree, find the shortest path, or maintain a sliding window",
         ignoreFocusOut: true
     });
     if (intendedBehavior === undefined) return;
@@ -765,7 +765,7 @@ async function checkLogic(context: vscode.ExtensionContext): Promise<void> {
     }
     if (!hintEngine.isLocalEndpoint(endpoint)) {
         const approval = await vscode.window.showWarningMessage(
-            `This logic review and any follow-up hint will send ${code.length} characters of source text and your task description to ${endpoint.host} over HTTPS. Continue?`,
+            `This logic review and any follow-up hint will send ${code.length} characters of source text and, if provided, your task description to ${endpoint.host} over HTTPS. Continue?`,
             { modal: true }, "Review and Continue"
         );
         if (approval !== "Review and Continue") return;
@@ -775,10 +775,53 @@ async function checkLogic(context: vscode.ExtensionContext): Promise<void> {
     isGeneratingHint = true;
     updateStatusBar();
     try {
-        const review = await vscode.window.withProgress(
+        let review = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: "AI Coding Buddy: Checking algorithm and code logic…", cancellable: false },
-            () => hintEngine.analyzeLogic(code, language, intendedBehavior.trim(), endpoint)
+            () => hintEngine.analyzeLogic(code, language, (intendedBehavior ?? "").trim(), endpoint)
         );
+        if (!intendedBehavior.trim() && review.intentConfidence >= 0.65) {
+            const action = await vscode.window.showInformationMessage(
+                `I think this code is intended to: ${review.inferredIntent}. Is that the task you want checked?`,
+                "Yes, Check This", "Clarify Task"
+            );
+            if (action === "Yes, Check This") {
+                intendedBehavior = review.inferredIntent;
+            } else if (action === "Clarify Task") {
+                const clarification = await vscode.window.showInputBox({
+                    title: "Clarify the DSA Task",
+                    prompt: "Describe the operation or expected result in one sentence.",
+                    placeHolder: "For example: reverse node links in place, not traverse and print them",
+                    ignoreFocusOut: true
+                });
+                if (clarification === undefined || !clarification.trim()) return;
+                intendedBehavior = clarification;
+                review = await vscode.window.withProgress(
+                    { location: vscode.ProgressLocation.Notification, title: "AI Coding Buddy: Rechecking against your task…", cancellable: false },
+                    () => hintEngine.analyzeLogic(code, language, (intendedBehavior ?? "").trim(), endpoint)
+                );
+            } else {
+                return;
+            }
+        }
+        if (review.intentConfidence < 0.65 || !intendedBehavior.trim()) {
+            const action = await vscode.window.showWarningMessage(
+                `I could not confidently establish the task. Current guess: ${review.inferredIntent || "unclear"}. Add the intended operation or expected result so I do not check the wrong algorithm.`,
+                "Clarify Task"
+            );
+            if (action !== "Clarify Task") return;
+            const clarification = await vscode.window.showInputBox({
+                title: "Clarify the DSA Task",
+                prompt: "Describe the operation or expected result in one sentence.",
+                placeHolder: "For example: reverse node links in place, not traverse and print them",
+                ignoreFocusOut: true
+            });
+            if (clarification === undefined || !clarification.trim()) return;
+            intendedBehavior = clarification;
+            review = await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: "AI Coding Buddy: Rechecking against your task…", cancellable: false },
+                () => hintEngine.analyzeLogic(code, language, (intendedBehavior ?? "").trim(), endpoint)
+            );
+        }
         const confidentIssue = review.issueDetected && review.confidence >= 0.72;
         let response: string;
         let level = getEffectiveLevel();
@@ -791,7 +834,7 @@ async function checkLogic(context: vscode.ExtensionContext): Promise<void> {
             }
             level = getEffectiveLevel();
             sessionRecorder.recordHint(level);
-            const hint = await hintEngine.generateHint(level, code, language, endpoint, intendedBehavior.trim());
+            const hint = await hintEngine.generateHint(level, code, language, endpoint, intendedBehavior.trim() || review.inferredIntent);
             const findingLabel = level === 1
                 ? "Let's compare the implementation with the task goal."
                 : level === 2
@@ -799,7 +842,9 @@ async function checkLogic(context: vscode.ExtensionContext): Promise<void> {
                     : `Likely ${review.category} issue${review.line ? ` near line ${review.line}` : ""} (${Math.round(review.confidence * 100)}% confidence).`;
             response = `${findingLabel}\n\n${hint}`;
         } else {
-            response = review.issueDetected
+            response = review.intentConfidence < 0.65
+                ? `I still could not confidently determine the intended DSA operation (${review.inferredIntent || "unclear"}). Give a more specific task description or a sample input and expected output, then check again.`
+                : review.issueDetected
                 ? `The review found a possible ${review.category} concern, but confidence was too low to raise assistance. Refine the task description or include a relevant example, then check again.`
                 : `No likely behavior-affecting logic issue was identified (${Math.round(review.confidence * 100)}% confidence). If the result is still wrong, add a concrete input/output example to the task description and check again.`;
         }
