@@ -5,6 +5,7 @@ exports.isCodingLanguage = isCodingLanguage;
 exports.languageFromDocument = languageFromDocument;
 exports.predictWithRules = predictWithRules;
 exports.nextAutomaticLevel = nextAutomaticLevel;
+exports.hasStruggleEvidence = hasStruggleEvidence;
 exports.sampleHintSource = sampleHintSource;
 exports.escapeHtml = escapeHtml;
 exports.isSafeLevel2Response = isSafeLevel2Response;
@@ -25,24 +26,41 @@ function languageFromDocument(languageId) {
     }
 }
 function predictWithRules(features) {
+    const stuck = features.stuck_line_seconds ?? 0;
+    const deletionBursts = features.deletion_bursts ?? 0;
+    const navigationBursts = features.navigation_bursts ?? 0;
     if (features.failed_runs >= 4 || features.errors >= 7 ||
-        features.idle_seconds >= 90 || features.deletions >= 16) {
+        features.deletions >= 16 || deletionBursts >= 8 ||
+        (stuck >= 90 && (features.errors >= 2 || deletionBursts >= 4 || navigationBursts >= 5))) {
         return 3;
     }
     if (features.failed_runs >= 1 || features.errors >= 2 ||
-        features.idle_seconds >= 35 || features.deletions >= 6 ||
-        features.rapid_edits >= 5) {
+        features.deletions >= 6 || deletionBursts >= 3 ||
+        features.rapid_edits >= 5 || navigationBursts >= 6 ||
+        (stuck >= 45 && (features.errors >= 1 || deletionBursts >= 2 || navigationBursts >= 3))) {
         return 2;
     }
     return 1;
 }
-function nextAutomaticLevel(currentLevel, predictedLevel, elapsedSeconds, waitSeconds) {
+function nextAutomaticLevel(currentLevel, predictedLevel, elapsedSeconds, waitSeconds, hasStruggleEvidence = false) {
     if (predictedLevel < currentLevel)
         return predictedLevel;
-    if (predictedLevel === currentLevel || elapsedSeconds < waitSeconds) {
+    if (predictedLevel === currentLevel || elapsedSeconds < waitSeconds || !hasStruggleEvidence) {
         return currentLevel;
     }
     return Math.min(currentLevel + 1, 3);
+}
+function hasStruggleEvidence(features, targetLevel) {
+    const stuck = features.stuck_line_seconds ?? 0;
+    const deletionBursts = features.deletion_bursts ?? 0;
+    const navigationBursts = features.navigation_bursts ?? 0;
+    if (targetLevel >= 3) {
+        return features.failed_runs >= 2 || features.errors >= 5 || features.deletions >= 12 ||
+            deletionBursts >= 6 || (stuck >= 90 && (features.errors >= 1 || deletionBursts >= 3 || navigationBursts >= 4));
+    }
+    return features.failed_runs >= 1 || features.errors >= 2 || features.deletions >= 6 ||
+        features.rapid_edits >= 5 || deletionBursts >= 3 || navigationBursts >= 6 ||
+        (stuck >= 45 && (features.errors >= 1 || deletionBursts >= 2 || navigationBursts >= 3));
 }
 function sampleHintSource(code, maxLength) {
     const limit = Math.max(1, Math.floor(maxLength));

@@ -4,6 +4,9 @@ export interface BehaviorFeatures {
     failed_runs: number;
     deletions: number;
     rapid_edits: number;
+    stuck_line_seconds?: number;
+    deletion_bursts?: number;
+    navigation_bursts?: number;
 }
 
 export type CodingLanguage = "python" | "java" | "c" | "cpp";
@@ -28,16 +31,21 @@ export function languageFromDocument(languageId: string): CodingLanguage | undef
 }
 
 export function predictWithRules(features: BehaviorFeatures): number {
+    const stuck = features.stuck_line_seconds ?? 0;
+    const deletionBursts = features.deletion_bursts ?? 0;
+    const navigationBursts = features.navigation_bursts ?? 0;
     if (
         features.failed_runs >= 4 || features.errors >= 7 ||
-        features.idle_seconds >= 90 || features.deletions >= 16
+        features.deletions >= 16 || deletionBursts >= 8 ||
+        (stuck >= 90 && (features.errors >= 2 || deletionBursts >= 4 || navigationBursts >= 5))
     ) {
         return 3;
     }
     if (
         features.failed_runs >= 1 || features.errors >= 2 ||
-        features.idle_seconds >= 35 || features.deletions >= 6 ||
-        features.rapid_edits >= 5
+        features.deletions >= 6 || deletionBursts >= 3 ||
+        features.rapid_edits >= 5 || navigationBursts >= 6 ||
+        (stuck >= 45 && (features.errors >= 1 || deletionBursts >= 2 || navigationBursts >= 3))
     ) {
         return 2;
     }
@@ -48,13 +56,27 @@ export function nextAutomaticLevel(
     currentLevel: number,
     predictedLevel: number,
     elapsedSeconds: number,
-    waitSeconds: number
+    waitSeconds: number,
+    hasStruggleEvidence = false
 ): number {
     if (predictedLevel < currentLevel) return predictedLevel;
-    if (predictedLevel === currentLevel || elapsedSeconds < waitSeconds) {
+    if (predictedLevel === currentLevel || elapsedSeconds < waitSeconds || !hasStruggleEvidence) {
         return currentLevel;
     }
     return Math.min(currentLevel + 1, 3);
+}
+
+export function hasStruggleEvidence(features: BehaviorFeatures, targetLevel: number): boolean {
+    const stuck = features.stuck_line_seconds ?? 0;
+    const deletionBursts = features.deletion_bursts ?? 0;
+    const navigationBursts = features.navigation_bursts ?? 0;
+    if (targetLevel >= 3) {
+        return features.failed_runs >= 2 || features.errors >= 5 || features.deletions >= 12 ||
+            deletionBursts >= 6 || (stuck >= 90 && (features.errors >= 1 || deletionBursts >= 3 || navigationBursts >= 4));
+    }
+    return features.failed_runs >= 1 || features.errors >= 2 || features.deletions >= 6 ||
+        features.rapid_edits >= 5 || deletionBursts >= 3 || navigationBursts >= 6 ||
+        (stuck >= 45 && (features.errors >= 1 || deletionBursts >= 2 || navigationBursts >= 3));
 }
 
 export function sampleHintSource(code: string, maxLength: number): string {

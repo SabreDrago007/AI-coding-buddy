@@ -11,7 +11,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 
-FEATURES = ["idle_seconds", "errors", "failed_runs", "deletions", "rapid_edits"]
+FEATURES = [
+    "idle_seconds", "errors", "failed_runs", "deletions", "rapid_edits",
+    "stuck_line_seconds", "deletion_bursts", "navigation_bursts",
+]
 
 
 def main():
@@ -21,9 +24,12 @@ def main():
     args = parser.parse_args()
     data = pd.read_csv(args.input_csv)
     required = FEATURES + ["manual_level"]
-    missing = [name for name in required if name not in data.columns]
+    missing = [name for name in ["manual_level"] if name not in data.columns]
     if missing:
         raise SystemExit("Missing required columns: " + ", ".join(missing))
+    for name in FEATURES:
+        if name not in data.columns:
+            data[name] = 0
     data = data[required].dropna()
     data["manual_level"] = pd.to_numeric(data["manual_level"], errors="coerce")
     data = data[data.manual_level.isin([1, 2, 3])]

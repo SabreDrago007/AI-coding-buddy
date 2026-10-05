@@ -2,7 +2,7 @@
   "name": "ai-coding-buddy",
   "displayName": "AI Coding Buddy",
   "description": "A struggle-aware AI coding tutor for VS Code.",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "ai-coding-buddy",
   "repository": {
     "type": "git",
@@ -99,21 +99,21 @@
           "default": 10,
           "minimum": 1,
           "maximum": 3600,
-          "description": "Time in seconds to remain at Level 1 before automatic escalation to Level 2 when the Random Forest continues to detect higher struggle."
+          "description": "Minimum seconds between Level 1 evaluations. Passing time never raises assistance by itself; qualifying error, revision, or navigation evidence is also required."
         },
         "codingBuddy.level2TimeLimit": {
           "type": "number",
           "default": 30,
           "minimum": 1,
           "maximum": 3600,
-          "description": "Time in seconds to remain at Level 2 before automatic escalation to Level 3 when the Random Forest continues to detect higher struggle."
+          "description": "Minimum seconds between Level 2 evaluations. Passing time never raises assistance by itself; stronger struggle evidence is required."
         },
         "codingBuddy.level3TimeLimit": {
           "type": "number",
           "default": 60,
           "minimum": 1,
           "maximum": 3600,
-          "description": "Time in seconds used while the student remains at Level 3 before the system re-evaluates the assistance level."
+          "description": "Minimum seconds between automatic assistance evaluations while at Level 3. Lowering can happen immediately when struggle signals ease."
         },
         "codingBuddy.pythonPath": {
           "type": "string",

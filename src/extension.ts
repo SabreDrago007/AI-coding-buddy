@@ -7,6 +7,7 @@ import { CodingLanguage, LanguageRunner } from "./languageRunner";
 import { SetupDiagnostics } from "./setupDiagnostics";
 import {
     escapeHtml,
+    hasStruggleEvidence,
     isAssistanceLevel,
     isCodingLanguage,
     languageFromDocument,
@@ -72,6 +73,19 @@ export function activate(context: vscode.ExtensionContext) {
         });
 
     context.subscriptions.push(changeListener);
+
+    const initialEditor = vscode.window.activeTextEditor;
+    if (initialEditor) detector.recordCursorMovement(initialEditor.document.uri.toString(), initialEditor.selection.active.line);
+    const activeEditorListener = vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor) detector.recordCursorMovement(editor.document.uri.toString(), editor.selection.active.line);
+    });
+    context.subscriptions.push(activeEditorListener);
+    const selectionListener = vscode.window.onDidChangeTextEditorSelection(event => {
+        if (event.textEditor === vscode.window.activeTextEditor && event.selections.length > 0) {
+            detector.recordCursorMovement(event.textEditor.document.uri.toString(), event.selections[0].active.line);
+        }
+    });
+    context.subscriptions.push(selectionListener);
 
     // TRACK ERRORS
     const diagnosticListener =
@@ -229,9 +243,12 @@ export function activate(context: vscode.ExtensionContext) {
                 `Current Struggle Level: ${getEffectiveLevel()}`,
                 "",
                 `Idle Time: ${features.idle_seconds} seconds`,
+                `Time on current line: ${features.stuck_line_seconds ?? 0} seconds`,
                 `Errors: ${features.errors}`,
                 `Failed Runs: ${features.failed_runs}`,
                 `Deletions: ${features.deletions}`,
+                `Recent deletion bursts: ${features.deletion_bursts ?? 0}`,
+                `Rapid navigation bursts: ${features.navigation_bursts ?? 0}`,
                 `Rapid Edits: ${features.rapid_edits}`
             ].join("\n");
 
@@ -787,7 +804,8 @@ async function processAutomaticLevel(
         currentLevel,
         predictedLevel,
         elapsedSeconds,
-        waitTime
+        waitTime,
+        hasStruggleEvidence(detector.getFeatures(), predictedLevel)
     );
     if (nextLevel === previousLevel) return currentLevel;
 
@@ -1036,13 +1054,13 @@ select {
 </div>
 
 <div class="card">
-    <div class="card-title">Automatic help timing</div>
+    <div class="card-title">Evidence checks and cooldown</div>
     <div class="time-grid">
         <div class="time-tile">Level 1<strong><span id="level1Time">${level1Time}</span>s</strong></div>
         <div class="time-tile">Level 2<strong><span id="level2Time">${level2Time}</span>s</strong></div>
         <div class="time-tile">Level 3<strong><span id="level3Time">${level3Time}</span>s</strong></div>
     </div>
-    <p class="helper">Adjust these limits in VS Code Settings → AI Coding Buddy.</p>
+    <p class="helper">These are minimum recheck intervals after a level change. Time passing alone never raises assistance; editor evidence is required.</p>
 </div>
 
 <div class="card">

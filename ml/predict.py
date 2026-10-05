@@ -32,13 +32,12 @@ def main():
     model = joblib.load(model_path)
 
     # Use a DataFrame so the feature names match training
-    values = pd.DataFrame([{
-        "idle_seconds": features["idle_seconds"],
-        "errors": features["errors"],
-        "failed_runs": features["failed_runs"],
-        "deletions": features["deletions"],
-        "rapid_edits": features["rapid_edits"]
-    }])
+    # Preserve bundled models' original columns while accepting richer locally
+    # trained models. Missing fields from older session CSVs default to zero.
+    model_features = getattr(model, "feature_names_in_", [
+        "idle_seconds", "errors", "failed_runs", "deletions", "rapid_edits"
+    ])
+    values = pd.DataFrame([{name: features.get(name, 0) for name in model_features}])
 
     prediction = model.predict(values)[0]
 

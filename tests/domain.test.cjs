@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
     escapeHtml,
+    hasStruggleEvidence,
     isAssistanceLevel,
     isCodingLanguage,
     isSafeLevel2Response,
@@ -29,9 +30,25 @@ test("rule estimate maps low, medium and high struggle features", () => {
 
 test("automatic level escalation waits, steps up one level, and lowers immediately", () => {
     assert.equal(nextAutomaticLevel(1, 3, 4, 10), 1);
-    assert.equal(nextAutomaticLevel(1, 3, 10, 10), 2);
+    assert.equal(nextAutomaticLevel(1, 3, 10, 10, true), 2);
+    assert.equal(nextAutomaticLevel(1, 3, 1000, 10, false), 1);
     assert.equal(nextAutomaticLevel(3, 1, 0, 10), 1);
     assert.equal(nextAutomaticLevel(3, 3, 100, 10), 3);
+});
+
+test("elapsed time or line dwell alone never raises automatic assistance", () => {
+    const blank = { idle_seconds: 120, errors: 0, failed_runs: 0, deletions: 0, rapid_edits: 0, stuck_line_seconds: 240, deletion_bursts: 0, navigation_bursts: 0 };
+    assert.equal(predictWithRules(blank), 1);
+    assert.equal(hasStruggleEvidence(blank, 2), false);
+    assert.equal(nextAutomaticLevel(1, 1, 3600, 10, false), 1);
+    assert.equal(nextAutomaticLevel(1, 2, 3600, 10, false), 1);
+});
+
+test("stuck-line dwell combines with revision, error, or navigation evidence", () => {
+    const base = { idle_seconds: 120, errors: 0, failed_runs: 0, deletions: 0, rapid_edits: 0, stuck_line_seconds: 60, deletion_bursts: 0, navigation_bursts: 0 };
+    assert.equal(hasStruggleEvidence(base, 2), false);
+    assert.equal(hasStruggleEvidence({ ...base, deletion_bursts: 2 }, 2), true);
+    assert.equal(predictWithRules({ ...base, navigation_bursts: 3 }), 2);
 });
 
 test("source sampling stays within its limit and preserves both ends", () => {

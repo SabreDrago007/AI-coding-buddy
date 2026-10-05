@@ -45,6 +45,13 @@ class StruggleDetector {
     failedRunEvents = [];
     deletionEvents = [];
     rapidEditEvents = [];
+    deletionEventTimes = [];
+    navigationEventTimes = [];
+    activeDocument = "";
+    activeLine = -1;
+    activeLineSince = Date.now();
+    lastNavigationAt = 0;
+    recentLines = [];
     mlUnavailable = false;
     predictionInFlight;
     constructor() { }
@@ -55,10 +62,36 @@ class StruggleDetector {
         if (deletedCharacters > 0) {
             // The training feature represents deletion operations, not characters.
             this.deletionEvents.push(now);
+            this.deletionEventTimes.push(now);
         }
         if (timeSinceLastEdit < 1000) {
             this.rapidEditEvents.push(now);
         }
+    }
+    recordCursorMovement(documentKey, line) {
+        const now = Date.now();
+        if (documentKey !== this.activeDocument) {
+            this.activeDocument = documentKey;
+            this.activeLine = line;
+            this.activeLineSince = now;
+            this.lastNavigationAt = now;
+            this.recentLines.length = 0;
+            this.recentLines.push(line);
+            return;
+        }
+        if (line === this.activeLine)
+            return;
+        const revisited = this.recentLines.slice(-6).includes(line);
+        const rapid = now - this.lastNavigationAt <= 1800;
+        const largeJump = Math.abs(line - this.activeLine) >= 3;
+        if (rapid && (largeJump || revisited))
+            this.navigationEventTimes.push(now);
+        this.activeLine = line;
+        this.activeLineSince = now;
+        this.lastNavigationAt = now;
+        this.recentLines.push(line);
+        if (this.recentLines.length > 8)
+            this.recentLines.shift();
     }
     recordError(errorKey) {
         const now = Date.now();
@@ -80,12 +113,17 @@ class StruggleDetector {
         const now = Date.now();
         const cutoff = now - FEATURE_WINDOW_MS;
         this.pruneEvents(cutoff);
+        this.pruneTimes(this.deletionEventTimes, now - 15_000);
+        this.pruneTimes(this.navigationEventTimes, now - 15_000);
         return {
             idle_seconds: Math.min(120, Math.floor((now - this.lastEditTime) / 1000)),
             errors: Math.min(this.errorEvents.size, 10),
             failed_runs: Math.min(this.failedRunEvents.length, 8),
             deletions: Math.min(this.deletionEvents.length, 20),
-            rapid_edits: Math.min(this.rapidEditEvents.length, 15)
+            rapid_edits: Math.min(this.rapidEditEvents.length, 15),
+            stuck_line_seconds: Math.min(300, Math.floor((now - this.activeLineSince) / 1000)),
+            deletion_bursts: Math.min(20, this.deletionEventTimes.length),
+            navigation_bursts: Math.min(20, this.navigationEventTimes.length)
         };
     }
     async predictLevel() {
@@ -118,7 +156,7 @@ class StruggleDetector {
             const modelPath = vscode.workspace.getConfiguration("codingBuddy").get("modelPath", "").trim();
             const prediction = await this.runPrediction(executable, scriptPath, modelPath);
             if (prediction !== undefined) {
-                return prediction;
+                return Math.max(prediction, (0, domain_1.predictWithRules)(this.getFeatures()));
             }
         }
         return this.fallbackToRules("Python or the model dependencies are unavailable. Configure Python and install requirements.txt to use the Random Forest.");
@@ -163,6 +201,12 @@ class StruggleDetector {
         this.failedRunEvents.length = 0;
         this.deletionEvents.length = 0;
         this.rapidEditEvents.length = 0;
+        this.deletionEventTimes.length = 0;
+        this.navigationEventTimes.length = 0;
+        this.recentLines.length = 0;
+        this.activeDocument = "";
+        this.activeLine = -1;
+        this.activeLineSince = Date.now();
         this.lastEditTime = Date.now();
     }
     dispose() {
@@ -177,6 +221,8 @@ class StruggleDetector {
         this.pruneTimes(this.failedRunEvents, cutoff);
         this.pruneTimes(this.deletionEvents, cutoff);
         this.pruneTimes(this.rapidEditEvents, cutoff);
+        this.pruneTimes(this.deletionEventTimes, Date.now() - 15_000);
+        this.pruneTimes(this.navigationEventTimes, Date.now() - 15_000);
     }
     pruneTimes(events, cutoff) {
         while (events.length > 0 && events[0] < cutoff) {
