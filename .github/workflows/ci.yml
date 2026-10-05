@@ -20,3 +20,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run package
+      - name: Upload installable VSIX
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-coding-buddy-vsix
+          path: ai-coding-buddy-*.vsix
+          if-no-files-found: error
+          retention-days: 30
