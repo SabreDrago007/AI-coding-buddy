@@ -5,4 +5,4 @@ total = 0
 for i in range(len(numbers)):
     total = total + numbers[i]
 
-print(totl)
+print(total)
