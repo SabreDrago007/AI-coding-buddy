@@ -13,7 +13,9 @@ AI Coding Buddy is a VS Code extension that estimates when a learner may be stuc
 
 ## Install from a VSIX
 
-Build the extension package from the project folder:
+You can download a prebuilt VSIX from the latest successful [Extension checks workflow](https://github.com/SabreDrago007/AI-coding-buddy/actions/workflows/ci.yml): open the run, download the **ai-coding-buddy-vsix** artifact, and extract the VSIX. GitHub keeps this CI artifact for 30 days.
+
+Or build the extension package from the project folder:
 
 ```bash
 npm ci
