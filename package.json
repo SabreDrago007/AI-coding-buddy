@@ -2,7 +2,7 @@
   "name": "ai-coding-buddy",
   "displayName": "AI Coding Buddy",
   "description": "A struggle-aware AI coding tutor for VS Code.",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "publisher": "ai-coding-buddy",
   "repository": {
     "type": "git",

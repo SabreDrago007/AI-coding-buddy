@@ -22,7 +22,7 @@ npm ci
 npm run package
 ```
 
-This creates `ai-coding-buddy-0.0.10.vsix`. In VS Code, open **Extensions → … → Install from VSIX…** and select that file. You can also install it from a terminal with `code --install-extension ai-coding-buddy-0.0.10.vsix`.
+This creates `ai-coding-buddy-0.0.11.vsix`. In VS Code, open **Extensions → … → Install from VSIX…** and select that file. You can also install it from a terminal with `code --install-extension ai-coding-buddy-0.0.11.vsix`.
 
 ## Requirements
 
@@ -39,7 +39,7 @@ The extension does not bundle Ollama, language runtimes, compilers, or Python ML
 |---|---|
 | **1** | One broad guiding question about the concept; no code, exact bug, or correction |
 | **2** | A focused reasoning strategy and test idea; more actionable than Level 1, but no exact condition, value, result, or solution |
-| **3** | The direct answer, focused corrected code when useful, and an explanation of why it works |
+| **3** | The specific faulty code section corrected, with an explanation of what went wrong and why the fix works |
 
 Level 2 is checked by conservative local patterns and a second model review. If either check flags or cannot verify a response, the extension uses a safe fallback hint. Language models can still make mistakes, so this reduces answer leaks but cannot guarantee a perfect boundary for every prompt or model.
 
