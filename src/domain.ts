@@ -75,3 +75,31 @@ export function escapeHtml(text: string): string {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 }
+
+/** Conservative guard for Level 2: reject code, prescriptions, and answer-shaped prose. */
+export function isSafeLevel2Response(response: string): boolean {
+    const text = response.trim();
+    if (!text || text.length > 600 || /```|~~~|`[^`]+`/.test(text)) return false;
+    if ((text.match(/[.!?](?:\s|$)/g) ?? []).length > 3) return false;
+
+    const answerShapedPatterns: RegExp[] = [
+        /\b(?:the answer|solution|fix|correction) is\b/i,
+        /\b(?:change|replace|set|assign|write|return)\b.{0,100}\b(?:to|with|as)\b/i,
+        /\buse\s+(?:this|the following|exactly)\b/i,
+        /\b(?:instead of|rather than)\b/i,
+        /\b(?:correct|fixed)\s+(?:line|version|code)\b/i,
+        /\b(?:should|needs? to|must)\s+(?:be|return|equal|contain|use|call|set)\b/i,
+        /\b(?:put|insert|add)\b.{0,70}\b(?:before|after|inside|above|below)\b/i,
+        /\b(?:0|1|true|false|null|none)\s+(?:is|should be|must be)\s+the\s+(?:output|answer|result)\b/i,
+        /(?:===|==|!=|<=|>=|=>|:=|\+=|-=|\*=|\/=|\*\*|\b\w+\s*=\s*\w+)/
+    ];
+    if (answerShapedPatterns.some(pattern => pattern.test(text))) return false;
+
+    const codeLikePatterns: RegExp[] = [
+        /^\s*(?:print|console\.log|return|def|function|for|while|if|import|from|class)\b/m,
+        /^\s*(?:const|let|var)\s+\w+\s*=/m,
+        /\b\w+\([^\n)]*\)\s*(?:\{|;|=>)/,
+        /\b(?:int|float|double|string|bool|char)\s+\w+\s*[=;(]/i
+    ];
+    return !codeLikePatterns.some(pattern => pattern.test(text));
+}

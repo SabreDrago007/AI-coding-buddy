@@ -26,9 +26,11 @@ The extension does not bundle Ollama, language runtimes, compilers, or Python ML
 
 | Level | Help |
 |---|---|
-| **1** | Subtle conceptual hint; no code solution |
-| **2** | Specific debugging guidance without executable code |
-| **3** | Direct explanation and corrected code when useful |
+| **1** | One broad guiding question about the concept; no code, exact bug, or correction |
+| **2** | A focused reasoning strategy and test idea; more actionable than Level 1, but no exact condition, value, result, or solution |
+| **3** | The direct answer, focused corrected code when useful, and an explanation of why it works |
+
+Level 2 is checked by conservative local patterns and a second model review. If either check flags or cannot verify a response, the extension uses a safe fallback hint. Language models can still make mistakes, so this reduces answer leaks but cannot guarantee a perfect boundary for every prompt or model.
 
 Use the status bar to open the theme-aware control panel. It updates in place as the level changes, supports keyboard focus, and respects reduced-motion settings. The programming-language dropdown supports Auto-detect, Python, Java, C, and C++. “Run Interactively” launches in a VS Code terminal for stdin input; “Run Current File” uses a bounded output/time runner. Both execute with your user permissions. Use “Check Setup” to inspect local tools and the optional Ollama model. The selection controls both hint context and **Run Current File**. Auto-detect follows the active editor's language mode.
 

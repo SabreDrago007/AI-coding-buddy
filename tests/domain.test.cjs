@@ -4,6 +4,7 @@ const {
     escapeHtml,
     isAssistanceLevel,
     isCodingLanguage,
+    isSafeLevel2Response,
     languageFromDocument,
     nextAutomaticLevel,
     predictWithRules,
@@ -44,4 +45,12 @@ test("source sampling stays within its limit and preserves both ends", () => {
 
 test("HTML escaping prevents markup and attribute injection", () => {
     assert.equal(escapeHtml(`<script x='"'>&`), "&lt;script x=&#39;&quot;&#39;&gt;&amp;");
+});
+
+test("Level 2 permits targeted reasoning hints but rejects answer leaks", () => {
+    assert.equal(isSafeLevel2Response("Trace a small input and watch when the loop stops. Compare that point with the data length."), true);
+    assert.equal(isSafeLevel2Response("The answer is 42; return 42 from the function."), false);
+    assert.equal(isSafeLevel2Response("Change the condition to i < n."), false);
+    assert.equal(isSafeLevel2Response("```python\nreturn total\n```"), false);
+    assert.equal(isSafeLevel2Response("Look at how the boundary value is handled. Try a case at the edge."), true);
 });
