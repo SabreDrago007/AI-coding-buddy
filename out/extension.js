@@ -371,7 +371,7 @@ function activate(context) {
     context.subscriptions.push(trainSessionsCommand);
     const interactiveCommand = vscode.commands.registerCommand("codingBuddy.runInteractive", () => runInteractiveFile(context));
     context.subscriptions.push(interactiveCommand);
-    const logicReviewCommand = vscode.commands.registerCommand("codingBuddy.checkLogic", () => checkLogic(context));
+    const logicReviewCommand = vscode.commands.registerCommand("codingBuddy.checkLogic", (taskDescription) => checkLogic(context, taskDescription));
     context.subscriptions.push(logicReviewCommand);
     // RESET
     const resetCommand = vscode.commands.registerCommand("codingBuddy.reset", () => {
@@ -453,7 +453,7 @@ function openControlPanel(context) {
                 await vscode.commands.executeCommand("codingBuddy.trainFromSessions");
                 break;
             case "analyzeLogic":
-                await vscode.commands.executeCommand("codingBuddy.checkLogic");
+                await vscode.commands.executeCommand("codingBuddy.checkLogic", typeof message.taskDescription === "string" ? message.taskDescription : "");
                 break;
             case "reset":
                 detector.reset();
@@ -546,7 +546,7 @@ async function runActiveFile(context) {
         isRunningFile = false;
     }
 }
-async function checkLogic(context) {
+async function checkLogic(context, providedTask) {
     if (isAnalyzingLogic || isGeneratingHint) {
         vscode.window.showInformationMessage("AI Coding Buddy is already reviewing code or generating a hint.");
         return;
@@ -562,17 +562,16 @@ async function checkLogic(context) {
         return;
     }
     const language = selectedLanguage === "auto" ? editor.document.languageId : selectedLanguage;
-    let intendedBehavior = await vscode.window.showInputBox({
-        title: "Check Code Logic",
-        prompt: "What DSA task should this code solve? Optional; AI Coding Buddy will infer it from names, comments, and code structure.",
-        placeHolder: "For example: invert a binary tree, find the shortest path, or maintain a sliding window",
-        ignoreFocusOut: true
-    });
-    if (intendedBehavior === undefined)
-        return;
-    if (!intendedBehavior.trim()) {
-        vscode.window.showWarningMessage("Describe what the code should do before checking its logic.");
-        return;
+    let intendedBehavior = providedTask;
+    if (intendedBehavior === undefined) {
+        intendedBehavior = await vscode.window.showInputBox({
+            title: "Check Code Logic",
+            prompt: "What DSA task should this code solve? Optional; AI Coding Buddy will infer it from names, comments, and code structure.",
+            placeHolder: "For example: find a shortest path, reverse a linked list, or maintain a sliding window",
+            ignoreFocusOut: true
+        });
+        if (intendedBehavior === undefined)
+            return;
     }
     let endpoint;
     try {
@@ -655,8 +654,10 @@ async function checkLogic(context) {
                     ? `The review found a possible ${review.category} concern, but confidence was too low to raise assistance. Refine the task description or include a relevant example, then check again.`
                     : `No likely behavior-affecting logic issue was identified (${Math.round(review.confidence * 100)}% confidence). If the result is still wrong, add a concrete input/output example to the task description and check again.`;
         }
-        const panel = vscode.window.createWebviewPanel("codingBuddyLogicReview", `AI Coding Buddy Logic Check - Level ${level}`, vscode.ViewColumn.Beside, { enableScripts: false, localResourceRoots: [] });
-        panel.webview.html = createHintHTML(level, response);
+        const resultKind = confidentIssue ? "concern" : review.intentConfidence < 0.65 || review.issueDetected ? "uncertain" : "clear";
+        const taskSummary = intendedBehavior.trim() || review.inferredIntent;
+        const panel = vscode.window.createWebviewPanel("codingBuddyLogicReview", "AI Coding Buddy — Logic Review", vscode.ViewColumn.Beside, { enableScripts: false, localResourceRoots: [] });
+        panel.webview.html = createLogicReviewHTML(level, taskSummary, response, resultKind);
     }
     catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -788,6 +789,7 @@ function updateControlPanelState() {
         type: "state",
         level: getEffectiveLevel(),
         mode: manualOverride ? "Manual" : "Automatic",
+        isAnalyzingLogic,
         manualOverride,
         selectedLanguage,
         level1Time: getLevelTimeLimit(1),
@@ -843,6 +845,32 @@ h1 {
     background: var(--vscode-textBlockQuote-background);
     border: 1px solid var(--vscode-panel-border);
 }
+.card + .card { margin-top: 12px; }
+.page-header {
+    display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+    padding:4px 0 18px; border-bottom:1px solid var(--vscode-panel-border); margin-bottom:18px;
+}
+.brand-mark { font-size:13px; font-weight:700; letter-spacing:.04em; color:var(--vscode-textLink-foreground); text-transform:uppercase; }
+.subtitle { max-width:560px; margin-top:5px; }
+.mode-pill { flex:0 0 auto; padding:5px 10px; border-radius:999px; border:1px solid var(--vscode-panel-border); color:var(--vscode-descriptionForeground); font-size:12px; }
+.review-card { border-left:3px solid var(--vscode-focusBorder); }
+.section-kicker { color:var(--vscode-descriptionForeground); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; margin-bottom:6px; }
+.review-title { font-size:18px; font-weight:650; margin:0; }
+.review-copy { max-width:620px; color:var(--vscode-descriptionForeground); margin:6px 0 14px; }
+.field-label { display:block; font-size:13px; font-weight:600; margin:14px 0 6px; }
+textarea {
+    box-sizing:border-box; width:100%; min-height:66px; resize:vertical;
+    padding:9px 10px; color:var(--vscode-input-foreground); background:var(--vscode-input-background);
+    border:1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius:6px;
+    font:inherit; line-height:1.45;
+}
+textarea:focus-visible { outline:2px solid var(--vscode-focusBorder); outline-offset:1px; }
+.button-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.button-row .hint-button { margin-top:0; }
+.secondary-button { background:var(--vscode-button-secondaryBackground); color:var(--vscode-button-secondaryForeground); }
+.secondary-button:hover:not(:disabled) { background:var(--vscode-button-secondaryHoverBackground); }
+details summary { cursor:pointer; color:var(--vscode-textLink-foreground); font-weight:600; padding:4px 0; }
+details[open] summary { margin-bottom:8px; }
 .card-title { font-size: 14px; font-weight: 650; }
 .level {
     display: inline-flex;
@@ -925,27 +953,37 @@ select {
 </style>
 </head>
 <body>
-<h1>🤖 AI Coding Buddy</h1>
-<div class="subtitle">Adaptive help, at your pace.</div>
+<header class="page-header">
+    <div><div class="brand-mark">AI Coding Buddy</div><h1>Learning workspace</h1><div class="subtitle">Reasoning support that adapts to your progress.</div></div>
+    <div class="mode-pill" id="headerMode">${mode} mode</div>
+</header>
 
 <div class="card">
-    <div class="card-title">Programming language</div>
+    <div class="section-kicker">Environment</div><div class="card-title">Programming language</div>
     <div><select id="languageSelect" aria-label="Programming language">
         ${languageOptions.map(([value, label]) => `<option value="${value}" ${selectedLanguage === value ? "selected" : ""}>${label}</option>`).join("")}
     </select></div>
     <p class="helper" id="languageSummary">${languageLabel} uses the active editor language when set to Auto-detect.</p>
-    <button class="hint-button" id="runButton">▶ &nbsp;Run Current File</button>
-    <button class="hint-button" id="interactiveButton">⌨ &nbsp;Run Interactively</button>
+</div>
+
+<div class="card review-card">
+    <div class="section-kicker">Code review</div>
+    <h2 class="review-title">Check algorithm and logic</h2>
+    <p class="review-copy">Reviews DSA intent, invariants, indexing, control flow, and language-specific APIs. The task is optional; if it is blank, AI Coding Buddy will infer the goal and ask you to confirm when uncertain.</p>
+    <label class="field-label" for="taskDescription">What should this code do? <span class="helper">Optional</span></label>
+    <textarea id="taskDescription" aria-describedby="taskHelp" placeholder="e.g. Find the shortest path from a source to every reachable node"></textarea>
+    <p class="helper" id="taskHelp">Select a code region first for a focused review, or leave nothing selected to review the file.</p>
+    <button class="hint-button" id="logicButton">Check Code Logic</button>
 </div>
 
 <div class="card">
-    <div class="card-title">Current assistance</div>
+    <div class="section-kicker">Assistance</div><div class="card-title">Current level</div>
     <div class="level" id="currentLevel">Level ${level}</div>
-    <div class="mode">Mode: <strong id="currentMode">${mode}</strong></div>
+    <div class="mode"><strong id="currentMode">${mode}</strong> mode · Help adapts to your progress.</div>
 </div>
 
 <div class="card">
-    <div class="card-title">Choose your help level</div>
+    <div class="section-kicker">Control</div><div class="card-title">Choose your help level</div>
     <div class="buttons">
         <button
             data-level="1" aria-pressed="${level === 1 && manualOverride}"
@@ -985,19 +1023,20 @@ select {
 </div>
 
 <div class="card">
-    <div class="card-title">Quick actions</div>
-
-    <button class="hint-button" id="getHintButton">
-        💡 Get Hint
-    </button>
-
-    <button class="hint-button" id="logicButton">🔎 &nbsp;Check Code Logic</button>
-
-    <button class="hint-button" id="resetButton">
-        🔄 Reset AI Coding Buddy
-    </button>
-    <button class="hint-button" id="setupButton">✓ &nbsp;Check Setup</button>
-    <button class="hint-button" id="trainButton">🧠 &nbsp;Train from Labeled Sessions</button>
+    <div class="section-kicker">Actions</div><div class="card-title">Work with your code</div>
+    <div class="button-row" style="margin-top:10px">
+        <button class="hint-button secondary-button" id="getHintButton">Get a hint</button>
+        <button class="hint-button secondary-button" id="runButton">Run current file</button>
+        <button class="hint-button secondary-button" id="interactiveButton">Run interactively</button>
+    </div>
+    <details style="margin-top:16px">
+        <summary>Settings and learning data</summary>
+        <div class="button-row">
+            <button class="hint-button secondary-button" id="setupButton">Check setup</button>
+            <button class="hint-button secondary-button" id="trainButton">Train from labeled sessions</button>
+            <button class="hint-button secondary-button" id="resetButton">Reset assistance</button>
+        </div>
+    </details>
 </div>
 
 <script nonce="${nonce}">
@@ -1009,8 +1048,8 @@ document.querySelectorAll("[data-level]").forEach((button) => {
 document.getElementById("languageSelect").addEventListener("change", (event) => {
     selectLanguage(event.target.value);
 });
-document.getElementById("runButton").addEventListener("click", runFile);
 document.getElementById("interactiveButton").addEventListener("click", runInteractive);
+document.getElementById("runButton").addEventListener("click", runFile);
 document.getElementById("setupButton").addEventListener("click", checkSetup);
 document.getElementById("trainButton").addEventListener("click", trainSessions);
 document.getElementById("automaticButton").addEventListener("click", automatic);
@@ -1064,7 +1103,10 @@ function getHint() {
 }
 
 function checkLogic() {
-    vscode.postMessage({ command: "analyzeLogic" });
+    const button = document.getElementById("logicButton");
+    button.disabled = true;
+    button.textContent = "Reviewing code…";
+    vscode.postMessage({ command: "analyzeLogic", taskDescription: document.getElementById("taskDescription").value });
 }
 
 window.addEventListener("message", (event) => {
@@ -1072,6 +1114,10 @@ window.addEventListener("message", (event) => {
     if (!state || state.type !== "state") return;
     document.getElementById("currentLevel").textContent = "Level " + state.level;
     document.getElementById("currentMode").textContent = state.mode;
+    document.getElementById("headerMode").textContent = state.mode + " mode";
+    const logicButton = document.getElementById("logicButton");
+    logicButton.disabled = Boolean(state.isAnalyzingLogic);
+    logicButton.textContent = state.isAnalyzingLogic ? "Reviewing code…" : "Check Code Logic";
     document.querySelectorAll("[data-level]").forEach((button) => {
         const active = state.manualOverride && Number(button.dataset.level) === state.level;
         button.setAttribute("aria-pressed", String(active));
@@ -1091,6 +1137,38 @@ window.addEventListener("message", (event) => {
 `;
 }
 // HINT HTML
+function createLogicReviewHTML(level, task, guidance, resultKind) {
+    const status = resultKind === "concern" ? "Possible issue found" : resultKind === "uncertain" ? "Needs clarification" : "No likely issue found";
+    const statusColor = resultKind === "concern" ? "var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground))" : resultKind === "clear" ? "var(--vscode-testing-iconPassed, var(--vscode-textLink-foreground))" : "var(--vscode-descriptionForeground)";
+    const safeTask = (0, domain_1.escapeHtml)(task || "Task could not be inferred");
+    const safeGuidance = (0, domain_1.escapeHtml)(guidance).replace(/\r?\n/g, "<br>");
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 760px; margin: 0 auto; padding: 28px clamp(16px, 5vw, 40px); color: var(--vscode-foreground); background: var(--vscode-editor-background); line-height: 1.6; }
+.eyebrow { color: var(--vscode-descriptionForeground); font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+h1 { font-size: 25px; margin: 5px 0 14px; }
+.status { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--vscode-panel-border); border-radius: 999px; color: ${statusColor}; font-size: 13px; font-weight: 650; }
+.card { margin-top: 16px; padding: 18px 20px; border: 1px solid var(--vscode-panel-border); border-radius: 10px; background: var(--vscode-textBlockQuote-background); }
+h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
+.task { color: var(--vscode-foreground); }
+.guidance { font-size: 15px; }
+.level { color: var(--vscode-descriptionForeground); font-size: 12px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div class="eyebrow">AI Coding Buddy · DSA Review</div>
+<h1>Logic review</h1>
+<div class="status">${status}</div>
+<section class="card task"><h2>Task being checked</h2><div>${safeTask}</div></section>
+<section class="card guidance"><h2>Guidance</h2><div>${safeGuidance}</div><div class="level">Level ${level} assistance</div></section>
+</body>
+</html>`;
+}
 function createHintHTML(level, hint) {
     const escapedHint = (0, domain_1.escapeHtml)(hint).replace(/\r?\n/g, "<br>");
     return `
