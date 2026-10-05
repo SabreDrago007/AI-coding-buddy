@@ -564,12 +564,16 @@ async function checkLogic(context) {
     const language = selectedLanguage === "auto" ? editor.document.languageId : selectedLanguage;
     const intendedBehavior = await vscode.window.showInputBox({
         title: "Check Code Logic",
-        prompt: "What should this code do? Optional, but expected behavior helps catch algorithm and indexing mistakes.",
-        placeHolder: "For example: store a binary tree in an array and visit every node in order",
+        prompt: "Describe the required behavior or postcondition. This is required to distinguish similar algorithms.",
+        placeHolder: "For example: mirror every node's left and right subtrees; do not just visit the nodes",
         ignoreFocusOut: true
     });
     if (intendedBehavior === undefined)
         return;
+    if (!intendedBehavior.trim()) {
+        vscode.window.showWarningMessage("Describe what the code should do before checking its logic.");
+        return;
+    }
     let endpoint;
     try {
         endpoint = hintEngine.getConfiguredEndpoint();
@@ -579,7 +583,7 @@ async function checkLogic(context) {
         return;
     }
     if (!hintEngine.isLocalEndpoint(endpoint)) {
-        const approval = await vscode.window.showWarningMessage(`This logic review and any follow-up hint will send ${code.length} characters of source text and your optional expected-behavior description to ${endpoint.host} over HTTPS. Continue?`, { modal: true }, "Review and Continue");
+        const approval = await vscode.window.showWarningMessage(`This logic review and any follow-up hint will send ${code.length} characters of source text and your task description to ${endpoint.host} over HTTPS. Continue?`, { modal: true }, "Review and Continue");
         if (approval !== "Review and Continue")
             return;
     }
@@ -600,13 +604,18 @@ async function checkLogic(context) {
             }
             level = getEffectiveLevel();
             sessionRecorder.recordHint(level);
-            const hint = await hintEngine.generateHint(level, code, language, endpoint);
-            response = `Likely ${review.category} issue${review.line ? ` near line ${review.line}` : ""} (${Math.round(review.confidence * 100)}% confidence).\n\n${hint}`;
+            const hint = await hintEngine.generateHint(level, code, language, endpoint, intendedBehavior.trim());
+            const findingLabel = level === 1
+                ? "Let's compare the implementation with the task goal."
+                : level === 2
+                    ? "The code may not meet the requested behavior."
+                    : `Likely ${review.category} issue${review.line ? ` near line ${review.line}` : ""} (${Math.round(review.confidence * 100)}% confidence).`;
+            response = `${findingLabel}\n\n${hint}`;
         }
         else {
             response = review.issueDetected
-                ? `The review found a possible ${review.category} concern, but confidence was too low to raise assistance. Add a short description of the expected behavior and check again.`
-                : `No likely behavior-affecting logic issue was identified (${Math.round(review.confidence * 100)}% confidence). If the result is still wrong, describe the expected behavior and run the logic check again.`;
+                ? `The review found a possible ${review.category} concern, but confidence was too low to raise assistance. Refine the task description or include a relevant example, then check again.`
+                : `No likely behavior-affecting logic issue was identified (${Math.round(review.confidence * 100)}% confidence). If the result is still wrong, add a concrete input/output example to the task description and check again.`;
         }
         const panel = vscode.window.createWebviewPanel("codingBuddyLogicReview", `AI Coding Buddy Logic Check - Level ${level}`, vscode.ViewColumn.Beside, { enableScripts: false, localResourceRoots: [] });
         panel.webview.html = createHintHTML(level, response);
