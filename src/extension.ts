@@ -33,6 +33,7 @@ let automaticTimer: NodeJS.Timeout;
 let isGeneratingHint = false;
 let isStartingLearningSession = false;
 let isRunningFile = false;
+let isAnalyzingLogic = false;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log("AI Coding Buddy is now active.");
@@ -249,6 +250,7 @@ export function activate(context: vscode.ExtensionContext) {
                 `Deletions: ${features.deletions}`,
                 `Recent deletion bursts: ${features.deletion_bursts ?? 0}`,
                 `Rapid navigation bursts: ${features.navigation_bursts ?? 0}`,
+                `Recent logic concerns: ${features.logic_concerns ?? 0}`,
                 `Rapid Edits: ${features.rapid_edits}`
             ].join("\n");
 
@@ -492,6 +494,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     const interactiveCommand = vscode.commands.registerCommand("codingBuddy.runInteractive", () => runInteractiveFile(context));
     context.subscriptions.push(interactiveCommand);
+    const logicReviewCommand = vscode.commands.registerCommand("codingBuddy.checkLogic", () => checkLogic(context));
+    context.subscriptions.push(logicReviewCommand);
 
     // RESET
     const resetCommand = vscode.commands.registerCommand(
@@ -601,6 +605,10 @@ function openControlPanel(context: vscode.ExtensionContext): void {
 
             case "trainSessions":
                 await vscode.commands.executeCommand("codingBuddy.trainFromSessions");
+                break;
+
+            case "analyzeLogic":
+                await vscode.commands.executeCommand("codingBuddy.checkLogic");
                 break;
 
             case "reset":
@@ -717,6 +725,84 @@ async function runActiveFile(context: vscode.ExtensionContext): Promise<void> {
         vscode.window.showErrorMessage(`AI Coding Buddy could not run this file: ${detail}`);
     } finally {
         isRunningFile = false;
+    }
+}
+
+async function checkLogic(context: vscode.ExtensionContext): Promise<void> {
+    if (isAnalyzingLogic || isGeneratingHint) {
+        vscode.window.showInformationMessage("AI Coding Buddy is already reviewing code or generating a hint.");
+        return;
+    }
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage("Open a source file before checking its logic.");
+        return;
+    }
+    const code = editor.selection.isEmpty ? editor.document.getText() : editor.document.getText(editor.selection);
+    if (!code.trim()) {
+        vscode.window.showWarningMessage("Select or enter some code to review.");
+        return;
+    }
+    const language = selectedLanguage === "auto" ? editor.document.languageId : selectedLanguage;
+    const intendedBehavior = await vscode.window.showInputBox({
+        title: "Check Code Logic",
+        prompt: "What should this code do? Optional, but expected behavior helps catch algorithm and indexing mistakes.",
+        placeHolder: "For example: store a binary tree in an array and visit every node in order",
+        ignoreFocusOut: true
+    });
+    if (intendedBehavior === undefined) return;
+
+    let endpoint: URL;
+    try {
+        endpoint = hintEngine.getConfiguredEndpoint();
+    } catch (error) {
+        vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+        return;
+    }
+    if (!hintEngine.isLocalEndpoint(endpoint)) {
+        const approval = await vscode.window.showWarningMessage(
+            `This logic review and any follow-up hint will send ${code.length} characters of source text and your optional expected-behavior description to ${endpoint.host} over HTTPS. Continue?`,
+            { modal: true }, "Review and Continue"
+        );
+        if (approval !== "Review and Continue") return;
+    }
+
+    isAnalyzingLogic = true;
+    isGeneratingHint = true;
+    updateStatusBar();
+    try {
+        const review = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: "AI Coding Buddy: Checking algorithm and code logic…", cancellable: false },
+            () => hintEngine.analyzeLogic(code, language, intendedBehavior.trim(), endpoint)
+        );
+        const confidentIssue = review.issueDetected && review.confidence >= 0.72;
+        let response: string;
+        let level = getEffectiveLevel();
+        if (confidentIssue) {
+            detector.recordLogicConcern();
+            if (!manualOverride && currentLevel < 2) {
+                currentLevel = 2;
+                levelStartedAt = Date.now();
+                updateStatusBar();
+            }
+            level = getEffectiveLevel();
+            sessionRecorder.recordHint(level);
+            const hint = await hintEngine.generateHint(level, code, language, endpoint);
+            response = `Likely ${review.category} issue${review.line ? ` near line ${review.line}` : ""} (${Math.round(review.confidence * 100)}% confidence).\n\n${hint}`;
+        } else {
+            response = review.issueDetected
+                ? `The review found a possible ${review.category} concern, but confidence was too low to raise assistance. Add a short description of the expected behavior and check again.`
+                : `No likely behavior-affecting logic issue was identified (${Math.round(review.confidence * 100)}% confidence). If the result is still wrong, describe the expected behavior and run the logic check again.`;
+        }
+        const panel = vscode.window.createWebviewPanel("codingBuddyLogicReview", `AI Coding Buddy Logic Check - Level ${level}`, vscode.ViewColumn.Beside, { enableScripts: false, localResourceRoots: [] });
+        panel.webview.html = createHintHTML(level, response);
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`AI Coding Buddy could not check this code's logic: ${detail}`);
+    } finally {
+        isAnalyzingLogic = false;
+        isGeneratingHint = false;
+        updateStatusBar();
     }
 }
 
@@ -1070,6 +1156,8 @@ select {
         💡 Get Hint
     </button>
 
+    <button class="hint-button" id="logicButton">🔎 &nbsp;Check Code Logic</button>
+
     <button class="hint-button" id="resetButton">
         🔄 Reset AI Coding Buddy
     </button>
@@ -1092,6 +1180,7 @@ document.getElementById("setupButton").addEventListener("click", checkSetup);
 document.getElementById("trainButton").addEventListener("click", trainSessions);
 document.getElementById("automaticButton").addEventListener("click", automatic);
 document.getElementById("getHintButton").addEventListener("click", getHint);
+document.getElementById("logicButton").addEventListener("click", checkLogic);
 document.getElementById("resetButton").addEventListener("click", resetBuddy);
 
 function setLevel(level) {
@@ -1137,6 +1226,10 @@ function getHint() {
     vscode.postMessage({
         command: "getHint"
     });
+}
+
+function checkLogic() {
+    vscode.postMessage({ command: "analyzeLogic" });
 }
 
 window.addEventListener("message", (event) => {

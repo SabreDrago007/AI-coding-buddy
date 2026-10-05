@@ -90,7 +90,7 @@ class SessionRecorder {
             "predicted_level", "manual_level", "requested_stronger_hint", "solved",
             "hint_requests", "time_to_fix_seconds", "attempts",
             "idle_seconds", "errors", "failed_runs", "deletions", "rapid_edits",
-            "stuck_line_seconds", "deletion_bursts", "navigation_bursts"
+            "stuck_line_seconds", "deletion_bursts", "navigation_bursts", "logic_concerns"
         ];
         const elapsedSeconds = Math.floor((Date.now() - session.startedAt) / 1000);
         const row = [
@@ -108,7 +108,8 @@ class SessionRecorder {
             features.rapid_edits,
             features.stuck_line_seconds ?? 0,
             features.deletion_bursts ?? 0,
-            features.navigation_bursts ?? 0
+            features.navigation_bursts ?? 0,
+            features.logic_concerns ?? 0
         ].join(",");
         try {
             await fs.mkdir(path.dirname(this.dataPath), { recursive: true });

@@ -51,6 +51,14 @@ test("stuck-line dwell combines with revision, error, or navigation evidence", (
     assert.equal(predictWithRules({ ...base, navigation_bursts: 3 }), 2);
 });
 
+test("confident semantic findings contribute to struggle evidence", () => {
+    const base = { idle_seconds: 0, errors: 0, failed_runs: 0, deletions: 0, rapid_edits: 0, logic_concerns: 0 };
+    assert.equal(hasStruggleEvidence(base, 2), false);
+    assert.equal(hasStruggleEvidence({ ...base, logic_concerns: 1 }, 2), true);
+    assert.equal(predictWithRules({ ...base, logic_concerns: 1 }), 2);
+    assert.equal(hasStruggleEvidence({ ...base, logic_concerns: 3, errors: 2 }, 3), true);
+});
+
 test("source sampling stays within its limit and preserves both ends", () => {
     const source = "START" + "x".repeat(500) + "END";
     const sample = sampleHintSource(source, 100);

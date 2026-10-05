@@ -14,6 +14,7 @@ export class StruggleDetector {
     private readonly rapidEditEvents: number[] = [];
     private readonly deletionEventTimes: number[] = [];
     private readonly navigationEventTimes: number[] = [];
+    private readonly logicConcernTimes: number[] = [];
     private activeDocument = "";
     private activeLine = -1;
     private activeLineSince = Date.now();
@@ -80,6 +81,10 @@ export class StruggleDetector {
         this.failedRunEvents.push(Date.now());
     }
 
+    recordLogicConcern(): void {
+        this.logicConcernTimes.push(Date.now());
+    }
+
     getFeatures(): BehaviorFeatures {
         const now = Date.now();
         const cutoff = now - FEATURE_WINDOW_MS;
@@ -94,7 +99,8 @@ export class StruggleDetector {
             rapid_edits: Math.min(this.rapidEditEvents.length, 15),
             stuck_line_seconds: Math.min(300, Math.floor((now - this.activeLineSince) / 1000)),
             deletion_bursts: Math.min(20, this.deletionEventTimes.length),
-            navigation_bursts: Math.min(20, this.navigationEventTimes.length)
+            navigation_bursts: Math.min(20, this.navigationEventTimes.length),
+            logic_concerns: Math.min(10, this.logicConcernTimes.length)
         };
     }
 
@@ -186,6 +192,7 @@ export class StruggleDetector {
         this.rapidEditEvents.length = 0;
         this.deletionEventTimes.length = 0;
         this.navigationEventTimes.length = 0;
+        this.logicConcernTimes.length = 0;
         this.recentLines.length = 0;
         this.activeDocument = "";
         this.activeLine = -1;
@@ -208,6 +215,8 @@ export class StruggleDetector {
         this.pruneTimes(this.rapidEditEvents, cutoff);
         this.pruneTimes(this.deletionEventTimes, Date.now() - 15_000);
         this.pruneTimes(this.navigationEventTimes, Date.now() - 15_000);
+        this.pruneTimes(this.logicConcernTimes, cutoff);
+        this.pruneTimes(this.logicConcernTimes, Date.now() - FEATURE_WINDOW_MS);
     }
 
     private pruneTimes(events: number[], cutoff: number): void {

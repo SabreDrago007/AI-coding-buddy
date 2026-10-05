@@ -21,15 +21,16 @@ test("session recorder writes feedback and behavior only to a local CSV", async 
             rapid_edits: 3,
             stuck_line_seconds: 60,
             deletion_bursts: 4,
-            navigation_bursts: 3
+            navigation_bursts: 3,
+            logic_concerns: 1
         });
 
         const csv = await fs.readFile(recorder.dataFilePath, "utf8");
         const rows = csv.trim().split(/\r?\n/);
         assert.equal(rows.length, 2);
         assert.match(rows[0], /predicted_level,manual_level,requested_stronger_hint,solved/);
-        assert.match(rows[0], /stuck_line_seconds,deletion_bursts,navigation_bursts$/);
-        assert.match(rows[1], /^1,2,true,true,1,\d+,1,4,1,0,2,3,60,4,3$/);
+        assert.match(rows[0], /stuck_line_seconds,deletion_bursts,navigation_bursts,logic_concerns$/);
+        assert.match(rows[1], /^1,2,true,true,1,\d+,1,4,1,0,2,3,60,4,3,1$/);
         assert.doesNotMatch(csv, /source|workspace|secret/i);
         assert.equal(recorder.isActive, false);
     } finally {

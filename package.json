@@ -2,7 +2,7 @@
   "name": "ai-coding-buddy",
   "displayName": "AI Coding Buddy",
   "description": "A struggle-aware AI coding tutor for VS Code.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "ai-coding-buddy",
   "repository": {
     "type": "git",
@@ -89,6 +89,10 @@
       {
         "command": "codingBuddy.trainFromSessions",
         "title": "AI Coding Buddy: Train from Labeled Sessions"
+      },
+      {
+        "command": "codingBuddy.checkLogic",
+        "title": "AI Coding Buddy: Check Code Logic"
       }
     ],
     "configuration": {

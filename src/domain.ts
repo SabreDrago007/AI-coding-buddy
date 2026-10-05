@@ -7,6 +7,7 @@ export interface BehaviorFeatures {
     stuck_line_seconds?: number;
     deletion_bursts?: number;
     navigation_bursts?: number;
+    logic_concerns?: number;
 }
 
 export type CodingLanguage = "python" | "java" | "c" | "cpp";
@@ -34,10 +35,12 @@ export function predictWithRules(features: BehaviorFeatures): number {
     const stuck = features.stuck_line_seconds ?? 0;
     const deletionBursts = features.deletion_bursts ?? 0;
     const navigationBursts = features.navigation_bursts ?? 0;
+    const logicConcerns = features.logic_concerns ?? 0;
     if (
         features.failed_runs >= 4 || features.errors >= 7 ||
         features.deletions >= 16 || deletionBursts >= 8 ||
-        (stuck >= 90 && (features.errors >= 2 || deletionBursts >= 4 || navigationBursts >= 5))
+        (stuck >= 90 && (features.errors >= 2 || deletionBursts >= 4 || navigationBursts >= 5)) ||
+        (logicConcerns >= 3 && (features.errors >= 2 || deletionBursts >= 3 || features.failed_runs >= 1))
     ) {
         return 3;
     }
@@ -45,7 +48,8 @@ export function predictWithRules(features: BehaviorFeatures): number {
         features.failed_runs >= 1 || features.errors >= 2 ||
         features.deletions >= 6 || deletionBursts >= 3 ||
         features.rapid_edits >= 5 || navigationBursts >= 6 ||
-        (stuck >= 45 && (features.errors >= 1 || deletionBursts >= 2 || navigationBursts >= 3))
+        (stuck >= 45 && (features.errors >= 1 || deletionBursts >= 2 || navigationBursts >= 3)) ||
+        logicConcerns >= 1
     ) {
         return 2;
     }
@@ -70,13 +74,16 @@ export function hasStruggleEvidence(features: BehaviorFeatures, targetLevel: num
     const stuck = features.stuck_line_seconds ?? 0;
     const deletionBursts = features.deletion_bursts ?? 0;
     const navigationBursts = features.navigation_bursts ?? 0;
+    const logicConcerns = features.logic_concerns ?? 0;
     if (targetLevel >= 3) {
         return features.failed_runs >= 2 || features.errors >= 5 || features.deletions >= 12 ||
-            deletionBursts >= 6 || (stuck >= 90 && (features.errors >= 1 || deletionBursts >= 3 || navigationBursts >= 4));
+            deletionBursts >= 6 || (stuck >= 90 && (features.errors >= 1 || deletionBursts >= 3 || navigationBursts >= 4)) ||
+            (logicConcerns >= 3 && (features.errors >= 2 || deletionBursts >= 3 || features.failed_runs >= 1));
     }
     return features.failed_runs >= 1 || features.errors >= 2 || features.deletions >= 6 ||
         features.rapid_edits >= 5 || deletionBursts >= 3 || navigationBursts >= 6 ||
-        (stuck >= 45 && (features.errors >= 1 || deletionBursts >= 2 || navigationBursts >= 3));
+        (stuck >= 45 && (features.errors >= 1 || deletionBursts >= 2 || navigationBursts >= 3)) ||
+        logicConcerns >= 1;
 }
 
 export function sampleHintSource(code: string, maxLength: number): string {

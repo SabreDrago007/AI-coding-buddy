@@ -13,7 +13,7 @@ from sklearn.model_selection import train_test_split
 
 FEATURES = [
     "idle_seconds", "errors", "failed_runs", "deletions", "rapid_edits",
-    "stuck_line_seconds", "deletion_bursts", "navigation_bursts",
+    "stuck_line_seconds", "deletion_bursts", "navigation_bursts", "logic_concerns",
 ]
 
 

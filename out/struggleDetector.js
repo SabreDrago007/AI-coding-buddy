@@ -47,6 +47,7 @@ class StruggleDetector {
     rapidEditEvents = [];
     deletionEventTimes = [];
     navigationEventTimes = [];
+    logicConcernTimes = [];
     activeDocument = "";
     activeLine = -1;
     activeLineSince = Date.now();
@@ -109,6 +110,9 @@ class StruggleDetector {
     recordFailedRun() {
         this.failedRunEvents.push(Date.now());
     }
+    recordLogicConcern() {
+        this.logicConcernTimes.push(Date.now());
+    }
     getFeatures() {
         const now = Date.now();
         const cutoff = now - FEATURE_WINDOW_MS;
@@ -123,7 +127,8 @@ class StruggleDetector {
             rapid_edits: Math.min(this.rapidEditEvents.length, 15),
             stuck_line_seconds: Math.min(300, Math.floor((now - this.activeLineSince) / 1000)),
             deletion_bursts: Math.min(20, this.deletionEventTimes.length),
-            navigation_bursts: Math.min(20, this.navigationEventTimes.length)
+            navigation_bursts: Math.min(20, this.navigationEventTimes.length),
+            logic_concerns: Math.min(10, this.logicConcernTimes.length)
         };
     }
     async predictLevel() {
@@ -203,6 +208,7 @@ class StruggleDetector {
         this.rapidEditEvents.length = 0;
         this.deletionEventTimes.length = 0;
         this.navigationEventTimes.length = 0;
+        this.logicConcernTimes.length = 0;
         this.recentLines.length = 0;
         this.activeDocument = "";
         this.activeLine = -1;
@@ -223,6 +229,8 @@ class StruggleDetector {
         this.pruneTimes(this.rapidEditEvents, cutoff);
         this.pruneTimes(this.deletionEventTimes, Date.now() - 15_000);
         this.pruneTimes(this.navigationEventTimes, Date.now() - 15_000);
+        this.pruneTimes(this.logicConcernTimes, cutoff);
+        this.pruneTimes(this.logicConcernTimes, Date.now() - FEATURE_WINDOW_MS);
     }
     pruneTimes(events, cutoff) {
         while (events.length > 0 && events[0] < cutoff) {
