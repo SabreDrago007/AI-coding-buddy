@@ -1364,4 +1364,84 @@ function createLogicReviewHTML(
     resultKind: "concern" | "uncertain" | "clear"
 ): string {
     const status = resultKind === "concern" ? "Possible issue found" : resultKind === "uncertain" ? "Needs clarification" : "No likely issue found";
-    const statusColor = resultKind === "concern" ? "var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground))" : resultKind === "clear" ? "var(--vscode-testing-iconPassed, var(--vscode-textLink-foreground
+    const statusColor = resultKind === "concern" ? "var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground))" : resultKind === "clear" ? "var(--vscode-testing-iconPassed, var(--vscode-textLink-foreground))" : "var(--vscode-descriptionForeground)";
+    const safeTask = escapeHtml(task || "Task could not be inferred");
+    const safeGuidance = escapeHtml(guidance).replace(/\r?\n/g, "<br>");
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 760px; margin: 0 auto; padding: 28px clamp(16px, 5vw, 40px); color: var(--vscode-foreground); background: var(--vscode-editor-background); line-height: 1.6; }
+.eyebrow { color: var(--vscode-descriptionForeground); font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+h1 { font-size: 25px; margin: 5px 0 14px; }
+.status { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--vscode-panel-border); border-radius: 999px; color: ${statusColor}; font-size: 13px; font-weight: 650; }
+.card { margin-top: 16px; padding: 18px 20px; border: 1px solid var(--vscode-panel-border); border-radius: 10px; background: var(--vscode-textBlockQuote-background); }
+h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
+.task { color: var(--vscode-foreground); }
+.guidance { font-size: 15px; }
+.level { color: var(--vscode-descriptionForeground); font-size: 12px; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div class="eyebrow">AI Coding Buddy · DSA Review</div>
+<h1>Logic review</h1>
+<div class="status">${status}</div>
+<section class="card task"><h2>Task being checked</h2><div>${safeTask}</div></section>
+<section class="card guidance"><h2>Guidance</h2><div>${safeGuidance}</div><div class="level">Level ${level} assistance</div></section>
+</body>
+</html>`;
+}
+
+function createHintHTML(level: number, hint: string): string {
+    const escapedHint = escapeHtml(hint).replace(/\r?\n/g, "<br>");
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<style>
+body {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    padding: 20px;
+}
+h1 {
+    font-size: 22px;
+}
+.hint {
+    font-size: 16px;
+    line-height: 1.6;
+    padding: 15px;
+    border-radius: 8px;
+    background: var(--vscode-textBlockQuote-background);
+}
+</style>
+</head>
+<body>
+<h1>💡 AI Coding Buddy</h1>
+
+<p>
+    Assistance level:
+    <strong>Level ${level}</strong>
+</p>
+
+<div class="hint">
+    ${escapedHint}
+</div>
+</body>
+</html>
+`;
+}
+
+export function deactivate() {
+    if (automaticTimer) {
+        clearInterval(automaticTimer);
+    }
+
+    if (detector) {
+        detector.dispose();
+    }
+}
