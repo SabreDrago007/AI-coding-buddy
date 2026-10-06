@@ -34,6 +34,9 @@ let isGeneratingHint = false;
 let isStartingLearningSession = false;
 let isRunningFile = false;
 let isAnalyzingLogic = false;
+let logicReviewGeneration = 0;
+let activeLogicReviewUri: string | undefined;
+let languageDetectTimer: NodeJS.Timeout | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log("AI Coding Buddy is now active.");
@@ -71,6 +74,25 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             detector.recordEdit(deletedCharacters);
+            if (activeLogicReviewUri === event.document.uri.toString()) {
+                // The in-flight result belongs to the old document snapshot. Ignore it and
+                // let the user immediately request a fresh review of the edited code.
+                logicReviewGeneration++;
+                activeLogicReviewUri = undefined;
+                isAnalyzingLogic = false;
+                isGeneratingHint = false;
+                updateStatusBar();
+            }
+            if (vscode.window.activeTextEditor?.document === event.document) {
+                if (languageDetectTimer) clearTimeout(languageDetectTimer);
+                languageDetectTimer = setTimeout(() => {
+                    languageDetectTimer = undefined;
+                    updateControlPanelState();
+                    if (getActiveDetectedLanguage()) {
+                        void vscode.commands.executeCommand("workbench.view.extension.codingBuddy");
+                    }
+                }, 250);
+            }
         });
 
     context.subscriptions.push(changeListener);
@@ -80,6 +102,13 @@ export function activate(context: vscode.ExtensionContext) {
     const activeEditorListener = vscode.window.onDidChangeActiveTextEditor(editor => {
         if (!editor) return;
         detector.recordCursorMovement(editor.document.uri.toString(), editor.selection.active.line);
+        if (activeLogicReviewUri && activeLogicReviewUri !== editor.document.uri.toString()) {
+            logicReviewGeneration++;
+            activeLogicReviewUri = undefined;
+            isAnalyzingLogic = false;
+            isGeneratingHint = false;
+        }
+        updateStatusBar();
         if (languageFromDocument(editor.document.languageId)) {
             void vscode.commands.executeCommand("workbench.view.extension.codingBuddy");
         }
@@ -212,7 +241,7 @@ export function activate(context: vscode.ExtensionContext) {
                 ? editor.document.getText()
                 : editor.document.getText(editor.selection);
             const languageAtRequest = selectedLanguage === "auto"
-                ? editor.document.languageId
+                ? getDocumentDetectedLanguage(editor.document) ?? editor.document.languageId
                 : selectedLanguage;
             let endpoint: URL;
             try {
@@ -783,7 +812,7 @@ async function runActiveFile(context: vscode.ExtensionContext): Promise<void> {
     }
 
     const language: CodingLanguage | undefined = selectedLanguage === "auto"
-        ? languageFromDocument(editor.document.languageId)
+        ? getDocumentDetectedLanguage(editor.document)
         : selectedLanguage as CodingLanguage;
     if (!language) {
         vscode.window.showWarningMessage(
@@ -852,8 +881,8 @@ async function runActiveFile(context: vscode.ExtensionContext): Promise<void> {
 }
 
 async function checkLogic(context: vscode.ExtensionContext, providedTask?: string): Promise<void> {
-    if (isAnalyzingLogic || isGeneratingHint) {
-        vscode.window.showInformationMessage("AI Coding Buddy is already reviewing code or generating a hint.");
+    if (isGeneratingHint && !isAnalyzingLogic) {
+        vscode.window.showInformationMessage("AI Coding Buddy is already generating a hint. Please wait.");
         return;
     }
     const editor = vscode.window.activeTextEditor;
@@ -866,7 +895,9 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
         vscode.window.showWarningMessage("Select or enter some code to review.");
         return;
     }
-    const language = selectedLanguage === "auto" ? editor.document.languageId : selectedLanguage;
+    const reviewGeneration = ++logicReviewGeneration;
+    activeLogicReviewUri = editor.document.uri.toString();
+    const language = selectedLanguage === "auto" ? getDocumentDetectedLanguage(editor.document) ?? editor.document.languageId : selectedLanguage;
     let intendedBehavior = providedTask;
     if (intendedBehavior === undefined) {
         intendedBehavior = await vscode.window.showInputBox({
@@ -875,6 +906,7 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
             placeHolder: "For example: find a shortest path, reverse a linked list, or maintain a sliding window",
             ignoreFocusOut: true
         });
+        if (reviewGeneration !== logicReviewGeneration) return;
         if (intendedBehavior === undefined) return;
     }
 
@@ -890,6 +922,7 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
             `This logic review and any follow-up hint will send ${code.length} characters of source text and, if provided, your task description to ${endpoint.host} over HTTPS. Continue?`,
             { modal: true }, "Review and Continue"
         );
+        if (reviewGeneration !== logicReviewGeneration) return;
         if (approval !== "Review and Continue") return;
     }
 
@@ -901,11 +934,13 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
             { location: vscode.ProgressLocation.Notification, title: "AI Coding Buddy: Checking algorithm and code logic…", cancellable: false },
             () => hintEngine.analyzeLogic(code, language, (intendedBehavior ?? "").trim(), endpoint)
         );
+        if (reviewGeneration !== logicReviewGeneration) return;
         if (!intendedBehavior.trim() && review.intentConfidence >= 0.65) {
             const action = await vscode.window.showInformationMessage(
                 `I think this code is intended to: ${review.inferredIntent}. Is that the task you want checked?`,
                 "Yes, Check This", "Clarify Task"
             );
+            if (reviewGeneration !== logicReviewGeneration) return;
             if (action === "Yes, Check This") {
                 intendedBehavior = review.inferredIntent;
             } else if (action === "Clarify Task") {
@@ -921,6 +956,7 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
                     { location: vscode.ProgressLocation.Notification, title: "AI Coding Buddy: Rechecking against your task…", cancellable: false },
                     () => hintEngine.analyzeLogic(code, language, (intendedBehavior ?? "").trim(), endpoint)
                 );
+                if (reviewGeneration !== logicReviewGeneration) return;
             } else {
                 return;
             }
@@ -930,6 +966,7 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
                 `I could not confidently establish the task. Current guess: ${review.inferredIntent || "unclear"}. Add the intended operation or expected result so I do not check the wrong algorithm.`,
                 "Clarify Task"
             );
+            if (reviewGeneration !== logicReviewGeneration) return;
             if (action !== "Clarify Task") return;
             const clarification = await vscode.window.showInputBox({
                 title: "Clarify the DSA Task",
@@ -943,6 +980,7 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
                 { location: vscode.ProgressLocation.Notification, title: "AI Coding Buddy: Rechecking against your task…", cancellable: false },
                 () => hintEngine.analyzeLogic(code, language, (intendedBehavior ?? "").trim(), endpoint)
             );
+            if (reviewGeneration !== logicReviewGeneration) return;
         }
         const confidentIssue = review.issueDetected && review.confidence >= 0.72;
         let response: string;
@@ -957,6 +995,7 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
             level = getEffectiveLevel();
             sessionRecorder.recordHint(level);
             const hint = await hintEngine.generateHint(level, code, language, endpoint, intendedBehavior.trim() || review.inferredIntent);
+            if (reviewGeneration !== logicReviewGeneration) return;
             const findingLabel = level === 1
                 ? "Let's compare the implementation with the task goal."
                 : level === 2
@@ -978,9 +1017,12 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
         const detail = error instanceof Error ? error.message : String(error);
         vscode.window.showErrorMessage(`AI Coding Buddy could not check this code's logic: ${detail}`);
     } finally {
-        isAnalyzingLogic = false;
-        isGeneratingHint = false;
-        updateStatusBar();
+        if (reviewGeneration === logicReviewGeneration) {
+            isAnalyzingLogic = false;
+            isGeneratingHint = false;
+            activeLogicReviewUri = undefined;
+            updateStatusBar();
+        }
     }
 }
 
@@ -994,7 +1036,7 @@ async function runInteractiveFile(context: vscode.ExtensionContext): Promise<voi
         vscode.window.showWarningMessage("Open a source file before running it.");
         return;
     }
-    const language = selectedLanguage === "auto" ? languageFromDocument(editor.document.languageId) : selectedLanguage as CodingLanguage;
+    const language = selectedLanguage === "auto" ? getDocumentDetectedLanguage(editor.document) : selectedLanguage as CodingLanguage;
     if (!language) {
         vscode.window.showWarningMessage("Choose Python, Java, C, or C++ in the AI Coding Buddy language dropdown.");
         return;
@@ -1131,10 +1173,35 @@ function updateControlPanelState(): void {
         isAnalyzingLogic,
         manualOverride,
         selectedLanguage,
+        detectedLanguage: getActiveDetectedLanguage(),
         level1Time: getLevelTimeLimit(1),
         level2Time: getLevelTimeLimit(2),
         level3Time: getLevelTimeLimit(3)
     });
+}
+
+function displayLanguage(language: CodingLanguage): string {
+    return language === "cpp" ? "C++" : language.charAt(0).toUpperCase() + language.slice(1);
+}
+
+function getActiveDetectedLanguage(): CodingLanguage | undefined {
+    const document = vscode.window.activeTextEditor?.document;
+    if (!document) return undefined;
+    return getDocumentDetectedLanguage(document);
+}
+
+function getDocumentDetectedLanguage(document: vscode.TextDocument): CodingLanguage | undefined {
+    return languageFromDocument(document.languageId) ?? inferLanguageFromSource(document.getText());
+}
+
+function inferLanguageFromSource(source: string): CodingLanguage | undefined {
+    const sample = source.slice(0, 12000);
+    if (!sample.trim()) return undefined;
+    if (/^\s*#\s*include\s*<\s*(?:iostream|bits\/stdc\+\+\.h)\s*>/m.test(sample) || /\bstd\s*::|\busing\s+namespace\s+std\s*;|\bcout\s*<</.test(sample)) return "cpp";
+    if (/^\s*#\s*include\s*<\s*(?:stdio\.h|stdlib\.h|string\.h)\s*>/m.test(sample) || /\bprintf\s*\(|\bscanf\s*\(|\bint\s+main\s*\(\s*(?:void)?\s*\)/.test(sample)) return "c";
+    if (/\b(?:public\s+)?(?:static\s+)?(?:class|interface|enum)\s+\w+|\bpublic\s+static\s+void\s+main\s*\(|\bSystem\.out\./.test(sample)) return "java";
+    if (/^\s*(?:def\s+\w+\s*\(|class\s+\w+\s*(?:\([^)]*\))?\s*:|if\s+.+:|for\s+.+\s+in\s+.+:|print\s*\()|\b(?:self|None|True|False)\b|^\s*from\s+\w+\s+import\s+/m.test(sample)) return "python";
+    return undefined;
 }
 
 // CONTROL PANEL HTML
@@ -1152,8 +1219,9 @@ function createControlPanelHTML(nonce: string): string {
         ["c", "C"],
         ["cpp", "C++"]
     ];
+    const detectedLanguage = getActiveDetectedLanguage();
     const languageLabel = selectedLanguage === "auto"
-        ? "Auto-detect"
+        ? detectedLanguage ? `Auto-detect · ${displayLanguage(detectedLanguage)} detected` : "Auto-detect · waiting for code"
         : languageOptions.find(([value]) => value === selectedLanguage)?.[1] ?? "Auto-detect";
 
     return `
@@ -1305,7 +1373,7 @@ select {
     <div><select id="languageSelect" aria-label="Programming language">
         ${languageOptions.map(([value, label]) => `<option value="${value}" ${selectedLanguage === value ? "selected" : ""}>${label}</option>`).join("")}
     </select></div>
-    <p class="helper" id="languageSummary">${languageLabel} uses the active editor language when set to Auto-detect.</p>
+    <p class="helper" id="languageSummary">${languageLabel}</p>
 </div>
 
 <div class="card review-card">
@@ -1488,8 +1556,14 @@ window.addEventListener("message", (event) => {
     const languageSelect = document.getElementById("languageSelect");
     if (document.activeElement !== languageSelect) languageSelect.value = state.selectedLanguage;
     const option = languageSelect.options[languageSelect.selectedIndex];
-    document.getElementById("languageSummary").textContent = option.text + " uses the active editor language when set to Auto-detect.";
+    document.getElementById("languageSummary").textContent = state.selectedLanguage === "auto"
+        ? (state.detectedLanguage ? "Detected: " + displayLanguage(state.detectedLanguage) + " · follows this editor" : "Auto-detect · start typing code to identify its language")
+        : option.text + " selected for hints and code execution.";
 });
+
+function displayLanguage(language) {
+    return ({ python: "Python", java: "Java", c: "C", cpp: "C++" })[language] || language;
+}
 </script>
 </body>
 </html>
