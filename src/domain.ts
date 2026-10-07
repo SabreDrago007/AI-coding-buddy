@@ -96,6 +96,35 @@ export function sampleHintSource(code: string, maxLength: number): string {
     return `${code.slice(0, headLength)}${marker}${code.slice(-tailLength)}`;
 }
 
+/** Adds stable editor line references for Level 3 edits, preserving gaps when a long file is sampled. */
+export function numberHintSourceLines(code: string, maxLength: number, lineOffset = 0): string {
+    const lines = code.split("\n");
+    const width = String(lineOffset + lines.length).length;
+    const numbered = lines.map((line, index) => `${String(lineOffset + index + 1).padStart(width, " ")} | ${line}`);
+    const full = numbered.join("\n");
+    const limit = Math.max(1, Math.floor(maxLength));
+    if (full.length <= limit) return full;
+
+    const marker = (first: number, last: number) => `... [source lines ${first}-${last} omitted] ...`;
+    const head: string[] = [];
+    const tail: string[] = [];
+    let headLength = 0;
+    let tailLength = 0;
+    let firstTail = numbered.length;
+    const budget = Math.max(1, limit - 100);
+    while (head.length < numbered.length && headLength + numbered[head.length].length + 1 <= budget * 0.6) {
+        headLength += numbered[head.length].length + 1;
+        head.push(numbered[head.length]);
+    }
+    while (firstTail > head.length && tailLength + numbered[firstTail - 1].length + 1 <= budget * 0.4) {
+        firstTail--;
+        tailLength += numbered[firstTail].length + 1;
+        tail.unshift(numbered[firstTail]);
+    }
+    if (firstTail <= head.length) return `${head.join("\n")}\n... [remaining source omitted] ...`;
+    return `${head.join("\n")}\n${marker(lineOffset + head.length + 1, lineOffset + firstTail)}\n${tail.join("\n")}`;
+}
+
 export function escapeHtml(text: string): string {
     return text
         .replace(/&/g, "&amp;")
@@ -132,3 +161,4 @@ export function isSafeLevel2Response(response: string): boolean {
     ];
     return !codeLikePatterns.some(pattern => pattern.test(text));
 }
+

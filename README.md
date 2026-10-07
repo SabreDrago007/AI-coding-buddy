@@ -4,7 +4,7 @@ AI Coding Buddy is a VS Code tutor that estimates when a learner may be stuck an
 
 ## Features
 
-- Three assistance levels: Level 1 gives a broad prompt, Level 2 gives focused reasoning without the direct answer, and Level 3 gives a direct answer with an explanation.
+- Three assistance levels: Level 1 gives a broad prompt, Level 2 gives focused reasoning without the direct answer, and Level 3 pinpoints the source line to change and explains why the correction works.
 - A dedicated sidebar with language selection, hints, DSA logic review, assistance levels, timer controls, code runners, and learning settings.
 - The sidebar opens automatically when a supported code file becomes active.
 - DSA logic review for arrays and strings, linked lists, stacks and queues, trees, heaps, graphs, sorting/searching, recursion, backtracking, dynamic programming, and greedy methods.

@@ -240,6 +240,7 @@ export function activate(context: vscode.ExtensionContext) {
             const codeAtRequest = editor.selection.isEmpty
                 ? editor.document.getText()
                 : editor.document.getText(editor.selection);
+            const lineOffsetAtRequest = editor.selection.isEmpty ? 0 : editor.selection.start.line;
             const languageAtRequest = selectedLanguage === "auto"
                 ? getDocumentDetectedLanguage(editor.document) ?? editor.document.languageId
                 : selectedLanguage;
@@ -279,7 +280,9 @@ export function activate(context: vscode.ExtensionContext) {
                             levelAtRequest,
                             codeAtRequest,
                             languageAtRequest,
-                            endpoint
+                            endpoint,
+                            "",
+                            lineOffsetAtRequest
                         );
                     }
                 );
@@ -890,7 +893,15 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
         vscode.window.showWarningMessage("Open a source file before checking its logic.");
         return;
     }
-    const code = editor.selection.isEmpty ? editor.document.getText() : editor.document.getText(editor.selection);
+    const selectedCode = editor.selection.isEmpty ? "" : editor.document.getText(editor.selection);
+    const selectionIsTooSmall = Boolean(selectedCode.trim()) &&
+        (selectedCode.trim().length < 40 || selectedCode.trim().split(/\r?\n/).filter(line => line.trim()).length < 2);
+    const code = editor.selection.isEmpty || selectionIsTooSmall
+        ? editor.document.getText()
+        : selectedCode;
+    if (selectionIsTooSmall) {
+        vscode.window.showInformationMessage("The selected text is too small to infer the algorithm, so AI Coding Buddy is reviewing the full file.");
+    }
     if (!code.trim()) {
         vscode.window.showWarningMessage("Select or enter some code to review.");
         return;
@@ -1607,7 +1618,12 @@ h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
 }
 
 function createHintHTML(level: number, hint: string): string {
-    const escapedHint = escapeHtml(hint).replace(/\r?\n/g, "<br>");
+    const escapedHint = escapeHtml(hint)
+        .replace(/```(?:[a-zA-Z0-9+#-]+)?\r?\n([\s\S]*?)```/g, (_match, code: string) =>
+            `<pre><code>${code.replace(/\r?\n/g, "&#10;")}</code></pre>`)
+        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\r?\n/g, "<br>");
 
     return `
 <!DOCTYPE html>
@@ -1629,6 +1645,8 @@ h1 {
     border-radius: 8px;
     background: var(--vscode-textBlockQuote-background);
 }
+pre { overflow-x: auto; padding: 12px; border-radius: 6px; background: var(--vscode-editor-background); white-space: pre-wrap; }
+code { font-family: var(--vscode-editor-font-family, monospace); }
 </style>
 </head>
 <body>
