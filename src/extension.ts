@@ -984,7 +984,17 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
         }
         const confidentIssue = review.issueDetected && review.confidence >= 0.72;
         let response: string;
-        let level = getEffectiveLevel();
+        if (review.issueDetected) {
+            // Code Logic Review is a diagnostic report, independent of the hint ladder.
+            // Do not replace its concrete finding with an L1/L2/L3 generated hint.
+            response = confidentIssue
+                ? review.explanation
+                : `Possible ${review.category} concern, but confidence is low: ${review.explanation}`;
+        } else if (review.intentConfidence < 0.65 || !intendedBehavior.trim()) {
+            response = `I could not confidently determine the intended DSA operation (${review.inferredIntent || "unclear"}). Add the intended operation or a sample input and expected output, then check again.`;
+        } else {
+            response = `No likely behavior-affecting logic issue was identified (${Math.round(review.confidence * 100)}% confidence). The review checked the implementation against the stated task. If you are seeing a wrong result, add a concrete input/output example and check again.`;
+        }
         if (confidentIssue) {
             detector.recordLogicConcern();
             if (!manualOverride && currentLevel < 2) {
@@ -992,27 +1002,11 @@ async function checkLogic(context: vscode.ExtensionContext, providedTask?: strin
                 levelStartedAt = Date.now();
                 updateStatusBar();
             }
-            level = getEffectiveLevel();
-            sessionRecorder.recordHint(level);
-            const hint = await hintEngine.generateHint(level, code, language, endpoint, intendedBehavior.trim() || review.inferredIntent);
-            if (reviewGeneration !== logicReviewGeneration) return;
-            const findingLabel = level === 1
-                ? "Let's compare the implementation with the task goal."
-                : level === 2
-                    ? "The code may not meet the requested behavior."
-                    : `Likely ${review.category} issue${review.line ? ` near line ${review.line}` : ""} (${Math.round(review.confidence * 100)}% confidence).`;
-            response = `${findingLabel}\n\n${hint}`;
-        } else {
-            response = review.intentConfidence < 0.65
-                ? `I still could not confidently determine the intended DSA operation (${review.inferredIntent || "unclear"}). Give a more specific task description or a sample input and expected output, then check again.`
-                : review.issueDetected
-                ? `The review found a possible ${review.category} concern, but confidence was too low to raise assistance. Refine the task description or include a relevant example, then check again.`
-                : `No likely behavior-affecting logic issue was identified (${Math.round(review.confidence * 100)}% confidence). If the result is still wrong, add a concrete input/output example to the task description and check again.`;
         }
         const resultKind = confidentIssue ? "concern" : review.intentConfidence < 0.65 || review.issueDetected ? "uncertain" : "clear";
         const taskSummary = intendedBehavior.trim() || review.inferredIntent;
         const panel = vscode.window.createWebviewPanel("codingBuddyLogicReview", "AI Coding Buddy — Logic Review", vscode.ViewColumn.Beside, { enableScripts: false, localResourceRoots: [] });
-        panel.webview.html = createLogicReviewHTML(level, taskSummary, response, resultKind);
+        panel.webview.html = createLogicReviewHTML(taskSummary, response, resultKind, review.category, review.line, review.confidence);
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         vscode.window.showErrorMessage(`AI Coding Buddy could not check this code's logic: ${detail}`);
@@ -1572,15 +1566,18 @@ function displayLanguage(language) {
 
 // HINT HTML
 function createLogicReviewHTML(
-    level: number,
     task: string,
     guidance: string,
-    resultKind: "concern" | "uncertain" | "clear"
+    resultKind: "concern" | "uncertain" | "clear",
+    category: string,
+    line: number | null,
+    confidence: number
 ): string {
-    const status = resultKind === "concern" ? "Possible issue found" : resultKind === "uncertain" ? "Needs clarification" : "No likely issue found";
+    const status = resultKind === "concern" ? "Likely issue found" : resultKind === "uncertain" ? "Review is uncertain" : "No likely issue found";
     const statusColor = resultKind === "concern" ? "var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground))" : resultKind === "clear" ? "var(--vscode-testing-iconPassed, var(--vscode-textLink-foreground))" : "var(--vscode-descriptionForeground)";
     const safeTask = escapeHtml(task || "Task could not be inferred");
     const safeGuidance = escapeHtml(guidance).replace(/\r?\n/g, "<br>");
+    const details = resultKind === "clear" ? "" : `<div class="level">${escapeHtml(category)}${line ? ` · line ${line}` : ""} · ${Math.round(confidence * 100)}% confidence</div>`;
     return `
 <!DOCTYPE html>
 <html>
@@ -1604,7 +1601,7 @@ h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
 <h1>Logic review</h1>
 <div class="status">${status}</div>
 <section class="card task"><h2>Task being checked</h2><div>${safeTask}</div></section>
-<section class="card guidance"><h2>Guidance</h2><div>${safeGuidance}</div><div class="level">Level ${level} assistance</div></section>
+<section class="card guidance"><h2>${resultKind === "clear" ? "Review result" : "Specific finding"}</h2><div>${safeGuidance}</div>${details}</section>
 </body>
 </html>`;
 }
