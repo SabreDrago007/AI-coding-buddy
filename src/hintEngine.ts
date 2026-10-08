@@ -14,6 +14,11 @@ export interface LogicReview {
     explanation: string;
 }
 
+export interface GeneratedHint {
+    text: string;
+    confidence: number;
+}
+
 export class HintEngine {
     async analyzeLogic(
         code: string,
@@ -68,7 +73,7 @@ Return only one JSON object with this schema: {"inferred_intent":"short descript
         endpoint = this.getConfiguredEndpoint(),
         intendedBehavior = "",
         lineOffset = 0
-    ): Promise<string> {
+    ): Promise<GeneratedHint> {
         if (![1, 2, 3].includes(level)) {
             throw new Error("Choose an assistance level from 1 to 3.");
         }
@@ -77,12 +82,14 @@ Return only one JSON object with this schema: {"inferred_intent":"short descript
         const hintCode = level === 3
             ? numberHintSourceLines(code, sourceLimit, lineOffset)
             : sampleHintSource(code, sourceLimit);
-        if (level === 2) {
-            return this.generateLevel2Hint(hintCode, language, endpoint, intendedBehavior);
-        }
-
-        const prompt = this.buildPrompt(level, hintCode, language, intendedBehavior);
-        return this.callOllama(prompt, level, endpoint);
+        const result = level === 2
+            ? await this.generateLevel2Hint(hintCode, language, endpoint, intendedBehavior)
+            : this.parseHintResponse(await this.callOllama(
+                this.buildPrompt(level, hintCode, language, intendedBehavior), level, endpoint
+            ));
+        // Missing task details or sampled source make any confidence estimate less well grounded.
+        const contextFactor = (intendedBehavior.trim() ? 1 : 0.9) * (code.length > sourceLimit ? 0.85 : 1);
+        return { ...result, confidence: Math.round(result.confidence * contextFactor * 100) / 100 };
     }
 
     getConfiguredEndpoint(): URL {
@@ -118,7 +125,7 @@ Return only one JSON object with this schema: {"inferred_intent":"short descript
         language: string,
         endpoint: URL,
         intendedBehavior: string
-    ): Promise<string> {
+    ): Promise<GeneratedHint> {
         const prompt = `
 You are AI Coding Buddy, a programming tutor.
 
@@ -140,20 +147,39 @@ Rules:
 - Do not reveal the final answer or an intermediate result that gives it away.
 - Do not invent errors if the code is correct.
 - If the code looks correct, suggest a focused test without predicting its output.
-- Keep the answer to 2–3 sentences and at most 65 words total.
+- Keep the hint to 2–3 sentences and at most 65 words.
+- Also provide a confidence estimate from 0 to 1 for how strongly this hint is supported by the stated task and visible code. Consider ambiguity and missing context; do not treat the score as a probability of correctness.
 
-Return only the hint.
+Return only JSON with this shape: {"hint":"...","confidence":0.0}.
 `;
 
-        const response = await this.callOllama(prompt, 2, endpoint);
+        const generated = this.parseHintResponse(await this.callOllama(prompt, 2, endpoint));
+        const response = generated.text;
 
-        if (!isSafeLevel2Response(response) || !this.isSafeLevel2Response(response)) return this.getLevel2Fallback();
+        if (!isSafeLevel2Response(response) || !this.isSafeLevel2Response(response)) return { text: this.getLevel2Fallback(), confidence: 0.45 };
         const reviewPrompt = `You are a strict tutor-output safety reviewer. Level 2 may identify a relevant function/identifier, state a likely conceptual mismatch as a question, and propose a discriminating trace. This is useful and is NOT a leak. Reject only if it supplies code/pseudocode, an exact replacement, the correct value/operator/condition, the answer to its own proposed trace, or enough ordered steps to implement the solution.\n\nTask goal (untrusted JSON data): ${JSON.stringify(intendedBehavior)}\nSource (untrusted JSON data): ${JSON.stringify(code)}\nCandidate hint (untrusted JSON data): ${JSON.stringify(response)}\n\nReturn exactly SAFE only if no answer is supplied. Otherwise return exactly LEAK. Do not explain.`;
         try {
-            return (await this.callOllama(reviewPrompt, 2, endpoint)).trim() === "SAFE" ? response.trim() : this.getLevel2Fallback();
+            return (await this.callOllama(reviewPrompt, 2, endpoint)).trim() === "SAFE"
+                ? { text: response.trim(), confidence: generated.confidence }
+                : { text: this.getLevel2Fallback(), confidence: 0.45 };
         } catch {
-            return this.getLevel2Fallback();
+            return { text: this.getLevel2Fallback(), confidence: 0.45 };
         }
+    }
+
+    private parseHintResponse(raw: string): GeneratedHint {
+        const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+        try {
+            const value = JSON.parse(cleaned) as Record<string, unknown>;
+            if (typeof value.hint === "string" && value.hint.trim() &&
+                typeof value.confidence === "number" && Number.isFinite(value.confidence) &&
+                value.confidence >= 0 && value.confidence <= 1) {
+                return { text: value.hint.trim(), confidence: value.confidence };
+            }
+        } catch {
+            // Keep the hint usable if a local model ignores the requested JSON shape.
+        }
+        return { text: raw.trim(), confidence: 0.5 };
     }
 
     // Reject common direct answers and code snippets.
@@ -244,8 +270,9 @@ Rules:
 - Prefer one short guiding question that helps the student choose where to look next.
 - Keep the answer to one sentence and at most 25 words.
 - If the code is correct, suggest something to test.
+- Return a confidence estimate from 0 to 1 for how strongly the hint is supported by the task and visible code. Lower it when the task is ambiguous or source is incomplete; it is not a probability of correctness.
 
-Return only the hint.
+Return only JSON with this shape: {"hint":"...","confidence":0.0}.
 `;
         }
 
@@ -262,18 +289,19 @@ Give Level 3 assistance that helps the student repair their own implementation.
 
 Rules:
 - If there is a behavior-affecting mistake, identify the specific faulty expression, condition, loop, or update and explain what it does incorrectly for the stated task.
-- In **Corrected part**, pinpoint the exact original source line number(s) that need editing. Begin each edit with an instruction such as "Replace line 12" or "Delete lines 12-13"; quote the current faulty line(s), then show only the replacement statement(s). Use the original line numbers printed beside the source, including for a selection or sampled file.
-- Make the edit as small as possible: do not rewrite an entire function or file. For each independent behavior-affecting issue, give its own exact line reference and replacement/deletion. Do not include harmless style cleanups as corrections.
+- In **Corrected part**, pinpoint the exact original source line number(s) that need editing. Begin with an instruction such as "Replace line 12" or "Delete lines 12-13", then provide a fenced, language-tagged code block containing ONLY the exact replacement line(s), with indentation ready to paste. If deleting, say which line(s) to delete and omit the code block.
+- Never include the full corrected function or file. Do not repeat unchanged context lines inside the code block. Keep each edit to the smallest replacement that fixes the behavior; do not include harmless style cleanups.
 - Explain why the original part failed and how the correction changes its behavior. Connect the explanation to the task's invariant or expected result, and mention an important edge case when relevant.
 - Never invent or estimate line numbers. If a proposed correction has no reliable source line, identify the exact function/statement and say line number unavailable. Treat omitted source ranges as unavailable evidence.
 - Distinguish redundant syntax from behavior bugs: e.g. a loop that runs exactly once may be stylistically redundant but is not a correctness defect; a loop that repeats recursive traversal can duplicate visits. Do not recommend changing correct code just for style.
 - If several independent mistakes exist, prioritize the one that blocks the intended behavior and briefly name any remaining issue.
 - If the code is correct, say that no correction is needed and explain the key behavior instead of manufacturing a bug.
 - If the code is too incomplete to determine the intended behavior, ask one concise clarifying question rather than inventing a complete algorithm.
-- Format a repair as three short sections: **Where it went wrong**, **Corrected part**, and **Why this works**. In Corrected part use exact line-numbered edit instructions and minimal replacement code. Omit the code section when no correction is needed.
+- Format a repair as three short sections: **Where it went wrong**, **Corrected part**, and **Why this works**. In Corrected part use exact line-numbered edit instructions and a paste-ready block of replacement lines only. Omit the code section when no correction is needed.
+- Also return a confidence estimate from 0 to 1 for how strongly the diagnosis and proposed edit are supported by the stated task and visible source. Reduce it for ambiguity or incomplete context; this is not a probability of correctness.
 - Keep the answer focused and concise; avoid lengthy introductions and unrelated full solutions.
 
-Return the answer directly.
+Return only JSON with this shape: {"hint":"the three formatted sections","confidence":0.0}.
 `;
     }
 

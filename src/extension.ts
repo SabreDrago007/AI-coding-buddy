@@ -267,7 +267,7 @@ export function activate(context: vscode.ExtensionContext) {
             updateStatusBar();
 
             try {
-                const hint = await vscode.window.withProgress(
+                const hintResult = await vscode.window.withProgress(
                     {
                         location:
                             vscode.ProgressLocation.Notification,
@@ -296,7 +296,8 @@ export function activate(context: vscode.ExtensionContext) {
 
                 panel.webview.html = createHintHTML(
                     levelAtRequest,
-                    hint
+                    hintResult.text,
+                    hintResult.confidence
                 );
             } catch (error) {
                 console.error("Hint generation failed:", error);
@@ -1617,7 +1618,7 @@ h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
 </html>`;
 }
 
-function createHintHTML(level: number, hint: string): string {
+function createHintHTML(level: number, hint: string, confidence: number): string {
     const escapedHint = escapeHtml(hint)
         .replace(/```(?:[a-zA-Z0-9+#-]+)?\r?\n([\s\S]*?)```/g, (_match, code: string) =>
             `<pre><code>${code.replace(/\r?\n/g, "&#10;")}</code></pre>`)
@@ -1647,6 +1648,8 @@ h1 {
 }
 pre { overflow-x: auto; padding: 12px; border-radius: 6px; background: var(--vscode-editor-background); white-space: pre-wrap; }
 code { font-family: var(--vscode-editor-font-family, monospace); }
+.confidence { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); font-size: 13px; }
+.confidence strong { color: var(--vscode-foreground); }
 </style>
 </head>
 <body>
@@ -1659,6 +1662,9 @@ code { font-family: var(--vscode-editor-font-family, monospace); }
 
 <div class="hint">
     ${escapedHint}
+</div>
+<div class="confidence"><strong>Hint confidence estimate: ${Math.round(confidence * 100)}%</strong><br>
+    Based on how clearly the task and visible code support this guidance. This is an estimate, not a probability that the hint is correct.
 </div>
 </body>
 </html>
