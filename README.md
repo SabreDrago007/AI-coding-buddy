@@ -23,7 +23,7 @@ npm ci
 npm run package
 ```
 
-This creates `ai-coding-buddy-0.0.11.vsix`. In VS Code, open **Extensions → … → Install from VSIX…** and select that file. You can also install it from a terminal with `code --install-extension ai-coding-buddy-0.0.11.vsix`.
+This creates `ai-coding-buddy-0.0.16.vsix`. In VS Code, open **Extensions → … → Install from VSIX…** and select that file. You can also install it from a terminal with `code --install-extension ai-coding-buddy-0.0.16.vsix`.
 
 ## Requirements
 
